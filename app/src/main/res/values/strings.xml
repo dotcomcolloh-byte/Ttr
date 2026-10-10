@@ -1,0 +1,330 @@
+<resources>
+    <string name="app_name">Telefam</string>
+    <string name="tagline">Stay connected. Stay together.</string>
+
+    <!-- Auth Modes & Titles -->
+    <string name="sign_up_title">Sign up</string>
+    <string name="sign_up_subtitle">Create your account to get started</string>
+    <string name="login_title">Login</string>
+    <string name="login_subtitle">Welcome back to Telefam</string>
+    <string name="forgot_password_title">Forgot Password</string>
+    <string name="forgot_password_subtitle">Enter your email to receive a secure OTP</string>
+    <string name="verify_otp_title">Verify OTP</string>
+    <string name="verify_otp_subtitle">Enter the 6-digit verification code sent to %1$s</string>
+    <string name="new_device_otp_title">New Device Verification</string>
+    <string name="new_device_otp_subtitle">Unrecognized device or location detected (%1$s). Confirm the 6-digit OTP sent to your email.</string>
+    <string name="reset_password_title">Create New Password</string>
+    <string name="reset_password_subtitle">Verify your OTP and choose a strong new password</string>
+
+    <!-- Labels & Placeholders -->
+    <string name="email_label">Email</string>
+    <string name="email_placeholder">Enter your email</string>
+    <string name="password_label">Password</string>
+    <string name="password_placeholder">Enter your password</string>
+    <string name="confirm_password_label">Confirm Password</string>
+    <string name="confirm_password_placeholder">Re-enter your password</string>
+    <string name="new_password_label">New Password</string>
+    <string name="new_password_placeholder">Enter new password</string>
+    <string name="otp_code_label">One-Time Password (OTP)</string>
+    <string name="otp_code_placeholder">Enter 6-digit OTP code</string>
+
+    <!-- Auth Buttons & Links -->
+    <string name="sign_up_button">Sign up</string>
+    <string name="login_button">Login</string>
+    <string name="send_otp_button">Send Verification OTP</string>
+    <string name="verify_otp_button">Verify &amp; Continue</string>
+    <string name="reset_password_button">Update Password</string>
+    <string name="or_divider">or</string>
+    <string name="continue_with_google">Continue with Google</string>
+    <string name="already_have_account">Already have an account?</string>
+    <string name="dont_have_account">Don\'t have an account?</string>
+    <string name="forgot_password_link">Forgot password?</string>
+    <string name="back_to_login">Back to Login</string>
+    <string name="resend_otp_in">Resend OTP in %1$s</string>
+    <string name="resend_otp_now">Resend OTP</string>
+    <string name="request_login_otp">Login via OTP Instead</string>
+
+    <!-- Profile Setup -->
+    <string name="profile_setup_title">Profile Setup</string>
+    <string name="profile_setup_subtitle">Tell us about yourself</string>
+    <string name="upload_profile_photo">Upload Profile Photo</string>
+    <string name="upload_profile_photo_desc">Add a clear photo to help your\nfriends recognize you.</string>
+    <string name="full_name_label">Full Name</string>
+    <string name="full_name_placeholder">Enter your full name</string>
+    <string name="username_label">Username</string>
+    <string name="username_placeholder">Choose a username</string>
+    <string name="phone_number_label">Phone Number</string>
+    <string name="phone_number_placeholder">Enter your phone number</string>
+    <string name="gender_label">Gender</string>
+    <string name="gender_placeholder">Select gender</string>
+    <string name="dob_label">Date of Birth</string>
+    <string name="dob_placeholder">Select date of birth</string>
+    <string name="bio_label">Bio</string>
+    <string name="bio_placeholder">Tell us something about yourself…</string>
+    <string name="continue_button">Continue</string>
+
+    <!-- Gender Options -->
+    <string name="gender_female">Female</string>
+    <string name="gender_male">Male</string>
+    <string name="gender_non_binary">Non-binary</string>
+    <string name="gender_prefer_not_to_say">Prefer not to say</string>
+
+    <!-- Image Crop -->
+    <string name="crop_photo_title">Crop Photo</string>
+    <string name="crop_photo_subtitle">Pinch to zoom and drag to position inside the frame</string>
+    <string name="crop_apply_button">Done</string>
+    <string name="crop_cancel_button">Cancel</string>
+
+    <!-- Rate Limits -->
+    <string name="login_cooldown_banner">Account temporarily locked after 3 failed login attempts. Wait %1$s or verify via OTP.</string>
+    <string name="otp_cooldown_banner">OTP rate limit reached (3 failed attempts). Cool down active for %1$s.</string>
+
+    <!-- Validation Errors -->
+    <string name="err_email_invalid">Please enter a valid email address (e.g. name@telefam.company)</string>
+    <string name="err_password_policy">Password must be at least 8 characters with uppercase, lowercase, number, and symbol</string>
+    <string name="err_password_mismatch">Passwords do not match</string>
+    <string name="err_otp_invalid">Enter a valid 6-digit numeric OTP code</string>
+    <string name="err_full_name">Full name must be at least 2 characters</string>
+    <string name="err_username">Username must be 3–24 characters (letters, numbers, underscores)</string>
+    <string name="err_phone">Enter a valid phone number (7–15 digits)</string>
+    <string name="err_gender">Please select your gender</string>
+    <string name="err_dob">Please select your date of birth</string>
+    <string name="err_bio">Bio cannot exceed 150 characters</string>
+
+    <!-- Main Home Screen & Navigation -->
+    <string name="search_chats_placeholder">Search chats, people, groups</string>
+    <string name="start_conversation_title">Start a conversation</string>
+    <string name="start_conversation_subtitle">Tap the button below to chat with\nyour friends, family or groups</string>
+    <string name="start_conversation_button">Start Conversation</string>
+    <string name="nav_chats">Chats</string>
+    <string name="nav_contacts">Contacts</string>
+    <string name="nav_post">Post</string>
+    <string name="nav_feeds">Feeds</string>
+    <string name="nav_profile">Profile</string>
+    <string name="coming_soon_title">Coming Soon</string>
+    <string name="coming_soon_desc">%1$s is coming soon to Telefam. Stay connected!</string>
+    <string name="menu_options">More options</string>
+
+    <!-- Privacy Screen & 3-Dots Menu (Matched to Reference Image) -->
+    <string name="privacy_title">Privacy</string>
+    <string name="privacy_subtitle">Control who can interact with you and your messages.</string>
+    <string name="privacy_option_anyone">Anyone</string>
+    <string name="privacy_option_nobody">Nobody</string>
+
+    <string name="privacy_message_requests_title">Message Requests</string>
+    <string name="privacy_message_requests_desc">Set who can send you message requests.</string>
+    <string name="privacy_who_can_call_title">Who Can Call Me</string>
+    <string name="privacy_who_can_call_desc">Control who can call you.</string>
+    <string name="privacy_who_can_screenshot_title">Who Can Screenshot Chats</string>
+    <string name="privacy_who_can_screenshot_desc">Choose who can take screenshots of your chats.</string>
+    <string name="privacy_who_can_share_title">Who Can Share Chats</string>
+    <string name="privacy_who_can_share_desc">Control who can share your chats.</string>
+    <string name="privacy_who_can_copy_title">Who Can Copy Messages</string>
+    <string name="privacy_who_can_copy_desc">Control who can copy your messages.</string>
+    <string name="privacy_who_can_download_title">Who Can Download My Media</string>
+    <string name="privacy_who_can_download_desc">Control who can download your photos, videos and files.</string>
+    <string name="privacy_chats_theme_title">Chats Theme</string>
+    <string name="privacy_chats_theme_desc">Choose your chat background theme.</string>
+    <string name="privacy_bubble_color_title">Message Bubbles Colour</string>
+    <string name="privacy_bubble_color_desc">Choose the colour of your message bubbles.</string>
+    <string name="privacy_read_receipts_title">Read Receipts</string>
+    <string name="privacy_read_receipts_desc">Control who can see if you read messages.</string>
+    <string name="privacy_typing_indicators_title">Typing Indicators</string>
+    <string name="privacy_typing_indicators_desc">Control who can see when you are typing.</string>
+    <string name="privacy_online_indicators_title">Online Indicators</string>
+    <string name="privacy_online_indicators_desc">Control who can see when you are online.</string>
+
+    <!-- 6 Non-Human Image Chat Background Themes -->
+    <string name="theme_crimson_silk">Crimson Silk Waves</string>
+    <string name="theme_savannah_sunset">Savannah Golden Sunset</string>
+    <string name="theme_aurora_cosmos">Celestial Aurora Lake</string>
+    <string name="theme_emerald_botanical">Emerald Botanical</string>
+    <string name="theme_sahara_twilight">Sahara Twilight Dunes</string>
+    <string name="theme_alpine_mist">Misty Alpine Ridges</string>
+
+    <!-- Message Bubble Colors (Default Red First) -->
+    <string name="bubble_color_red">Telefam Red (Default)</string>
+    <string name="bubble_color_crimson_rose">Crimson Rose</string>
+    <string name="bubble_color_royal_blue">Royal Sapphire</string>
+    <string name="bubble_color_emerald">Emerald Jade</string>
+    <string name="bubble_color_violet">Imperial Violet</string>
+    <string name="bubble_color_sunset_amber">Sunset Amber</string>
+    <string name="bubble_color_ocean_teal">Ocean Teal</string>
+    <string name="bubble_color_indigo">Midnight Indigo</string>
+    <string name="bubble_color_magenta">Berry Magenta</string>
+    <string name="bubble_color_slate">Obsidian Slate</string>
+
+    <string name="preview_incoming_msg">Welcome to Telefam! Stay connected with your family and friends.</string>
+    <string name="preview_outgoing_msg">Happy to be here! Love how clean this theme looks.</string>
+    <string name="apply_selection">Done</string>
+
+    <!-- Contacts Discovery & Social Graph -->
+    <string name="suggested_for_you_title">Suggested For You</string>
+    <string name="contacts_filter_suggested">Suggested</string>
+    <string name="contacts_filter_all">All</string>
+    <string name="contacts_filter_followers">Followers</string>
+    <string name="contacts_filter_following">Following</string>
+    <string name="contacts_filter_friends">Friends</string>
+    <string name="contacts_search_placeholder">Search name or @username</string>
+    <string name="contacts_access_title">Allow access to contacts</string>
+    <string name="contacts_access_message">Allow access to your contacts. We only use them to suggest friends for you.</string>
+    <string name="contacts_allow_button">Allow</string>
+    <string name="contacts_synced_badge">Contacts Synced</string>
+    <string name="contacts_refresh_daily_hint">Updated</string>
+    <string name="contacts_refresh_button">Refresh</string>
+    <string name="contacts_no_internet_banner">No internet connection</string>
+    <string name="contacts_empty_title">No people found</string>
+    <string name="contacts_empty_subtitle">Try searching with a different name or @username.</string>
+    <string name="contacts_empty_followers_title">No followers yet</string>
+    <string name="contacts_empty_followers_subtitle">People who follow you will appear here.</string>
+    <string name="contacts_empty_following_title">Not following anyone yet</string>
+    <string name="contacts_empty_following_subtitle">People you follow will appear here.</string>
+    <string name="contacts_empty_friends_title">No friends yet</string>
+    <string name="contacts_empty_friends_subtitle">When you and someone follow each other, they appear here as friends.</string>
+    <string name="mutual_connections_format">%1$d mutual connections</string>
+    <string name="from_your_contacts_badge">In your contacts</string>
+
+    <!-- Follow Action States -->
+    <string name="action_follow">Follow</string>
+    <string name="action_follow_back">Follow Back</string>
+    <string name="action_following">Following</string>
+    <string name="action_friends">Friends</string>
+
+    <!-- Public User Profile & Posts -->
+    <string name="profile_stat_following">Following</string>
+    <string name="profile_stat_followers">Followers</string>
+    <string name="profile_stat_likes">Likes</string>
+    <string name="profile_action_message">Message</string>
+    <string name="profile_action_subscribe">Subscribe</string>
+    <string name="profile_posts_header">Posts</string>
+    <string name="posts_filter_all">All Posts</string>
+    <string name="posts_filter_most_viewed">Most Viewed</string>
+    <string name="posts_filter_latest">Latest</string>
+    <string name="profile_menu_report">Report</string>
+    <string name="profile_menu_copy_url">Copy Profile URL</string>
+    <string name="profile_menu_block">Block User</string>
+    <string name="profile_menu_unblock">Unblock User</string>
+    <string name="profile_url_copied">Profile link copied</string>
+    <string name="profile_user_blocked_msg">User blocked</string>
+    <string name="profile_user_unblocked_msg">User unblocked</string>
+    <string name="profile_blocked_banner">You have blocked this account.</string>
+    <string name="profile_no_posts_yet">No posts yet</string>
+    <string name="load_more_button">Load More</string>
+
+    <!-- Multi-Question Report Flow -->
+    <string name="report_sheet_title">Report Account</string>
+    <string name="report_sheet_subtitle">Please select the details below so we can review this account.</string>
+    <string name="report_question_1_title">1. Why are you reporting this account?</string>
+    <string name="report_q1_spam">Spam or fake account</string>
+    <string name="report_q1_impersonation">Pretending to be someone else</string>
+    <string name="report_q1_harassment">Harassment or abusive behavior</string>
+    <string name="report_q1_inappropriate">Inappropriate profile content</string>
+    <string name="report_q1_scam">Scam or suspicious links</string>
+    <string name="report_question_2_title">2. Where did this happen?</string>
+    <string name="report_q2_profile">Profile name, @username, bio, or photo</string>
+    <string name="report_q2_posts">Posts or media</string>
+    <string name="report_q2_messages">Messages or requests</string>
+    <string name="report_q2_unwanted_contact">Unwanted contact</string>
+    <string name="report_question_3_title">3. How should we handle this?</string>
+    <string name="report_q3_standard">Submit for review</string>
+    <string name="report_q3_urgent">Mark as urgent</string>
+    <string name="report_q3_mute">Submit report and block this account</string>
+    <string name="report_notes_label">Additional details (optional)</string>
+    <string name="report_submit_button">Submit Report</string>
+    <string name="report_submitted_confirmation">Report submitted. Thank you.</string>
+
+    <!-- Owner Profile Screen (Reference Image) -->
+    <string name="owner_profile_stat_subscribers">Subscribers</string>
+    <string name="owner_profile_edit_button">Edit profile</string>
+    <string name="owner_profile_settings_button">Settings</string>
+    <string name="owner_profile_tab_posts">Posts</string>
+    <string name="owner_profile_tab_saved">Saved</string>
+    <string name="owner_profile_tab_reshared">Reshared</string>
+    <string name="owner_profile_tab_locked">Private</string>
+    <string name="owner_profile_edit_title">Edit Profile</string>
+    <string name="owner_profile_save_changes">Save Changes</string>
+    <string name="owner_profile_saved_confirmation">Profile updated</string>
+    <string name="owner_profile_name_cooldown_hint">You can change your name once every 7 days.</string>
+    <string name="owner_profile_name_cooldown_locked_format">You can change your name again in %1$d day(s).</string>
+    <string name="owner_profile_username_cooldown_hint">You can change your username once every 30 days.</string>
+    <string name="owner_profile_username_cooldown_locked_format">You can change your username again in %1$d day(s).</string>
+    <string name="owner_profile_pull_to_refresh_hint">Pull down to refresh</string>
+    <string name="owner_profile_refreshed_banner">Profile updated</string>
+    <string name="owner_profile_no_subscribers_yet">No subscribers yet</string>
+
+    <!-- Settings and Privacy Root & Dialogs -->
+    <string name="settings_and_privacy_title">Settings and privacy</string>
+    <string name="settings_logout_confirm_title">Log out of Telefam?</string>
+    <string name="settings_logout_confirm_message">Your account will be saved on this device for quick login when you return.</string>
+    <string name="settings_logout_button">Log out</string>
+
+    <string name="settings_section_account">Account</string>
+    <string name="settings_row_account_title">Account</string>
+    <string name="settings_row_account_subtitle">Profile, contact details, password, recovery, deactivation &amp; deletion</string>
+    <string name="settings_row_privacy_account_title">Privacy</string>
+    <string name="settings_row_privacy_account_subtitle">Private account, activity status, interactions &amp; downloads</string>
+    <string name="settings_row_security_title">Security &amp; permissions</string>
+    <string name="settings_row_security_subtitle">Password, 2-step verification, passkey, devices &amp; permissions</string>
+    <string name="settings_row_share_profile_title">Share profile</string>
+    <string name="settings_row_share_profile_subtitle">Share QR code, copy profile link or save QR card</string>
+
+    <string name="settings_section_content_activity">Content &amp; Activity</string>
+    <string name="settings_row_notifications_title">Notifications</string>
+    <string name="settings_row_notifications_subtitle">Likes, comments, followers, direct messages, push &amp; email</string>
+    <string name="settings_row_content_prefs_title">Content preferences</string>
+    <string name="settings_row_content_prefs_subtitle">Languages, topics, suggested content, video quality &amp; filtering</string>
+
+    <string name="settings_section_privacy_safety">Privacy &amp; Safety</string>
+    <string name="settings_row_privacy_controls_title">Privacy controls</string>
+    <string name="settings_row_privacy_controls_subtitle">Detailed visibility, interactions, messaging &amp; content reuse rules</string>
+    <string name="settings_row_blocked_accounts_title">Blocked accounts</string>
+    <string name="settings_row_blocked_accounts_subtitle">Review and unblock restricted accounts</string>
+    <string name="settings_row_report_problem_title">Report a problem</string>
+    <string name="settings_row_report_problem_subtitle">Report bugs, safety concerns or attach a screenshot</string>
+    <string name="settings_row_safety_center_title">Safety Center</string>
+    <string name="settings_row_safety_center_subtitle">Safety guides, account protection, teen safety &amp; crisis resources</string>
+
+    <string name="settings_section_support_about">Support &amp; About</string>
+    <string name="settings_row_help_support_title">Help &amp; support</string>
+    <string name="settings_row_help_support_subtitle">Search help articles, contact support &amp; view your requests</string>
+    <string name="settings_row_terms_policies_title">Terms and policies</string>
+    <string name="settings_row_terms_policies_subtitle">Terms of Service, Privacy Policy, Community Guidelines &amp; Cookies</string>
+    <string name="settings_row_about_title">About</string>
+    <string name="settings_row_about_subtitle">App version, what\'s new, open-source licenses &amp; company info</string>
+
+    <!-- Owner Profile Menu Screen -->
+    <string name="owner_menu_title">Menu</string>
+    <string name="owner_menu_market">Market</string>
+    <string name="owner_menu_clips">Clips</string>
+    <string name="owner_menu_events">Events</string>
+    <string name="owner_menu_saved">Saved</string>
+    <string name="owner_menu_groups">Groups</string>
+    <string name="owner_menu_memories">Memories</string>
+    <string name="owner_menu_pages">Pages</string>
+    <string name="owner_menu_gaming">Gaming</string>
+    <string name="owner_menu_live_stream">Live Stream</string>
+    <string name="owner_menu_see_more">See more</string>
+    <string name="owner_menu_help_support">Help &amp; support</string>
+    <string name="owner_menu_settings_privacy">Settings &amp; privacy</string>
+    <string name="owner_menu_log_out">Log Out</string>
+    <string name="owner_menu_dashboard">Dashboard</string>
+    <string name="owner_menu_dashboard_desc">View your performance, analytics and insights</string>
+    <string name="owner_menu_stars">Stars</string>
+    <string name="owner_menu_stars_desc">Get support from your fans</string>
+    <string name="owner_menu_subscription">Subscription</string>
+    <string name="owner_menu_subscription_desc">Manage your subscriptions and exclusive content</string>
+    <string name="owner_menu_monetization">Monetization</string>
+    <string name="owner_menu_monetization_desc">Earn from your content and creator programs</string>
+    <string name="owner_menu_wallet">Wallet</string>
+    <string name="owner_menu_wallet_desc">View your balance and transaction history</string>
+    <string name="owner_menu_linked_device">Linked device</string>
+    <string name="owner_menu_linked_device_desc">Manage your linked devices</string>
+    <string name="owner_menu_create_campaign">Create campaign</string>
+    <string name="owner_menu_create_campaign_desc">Collaborate with brands and grow your reach</string>
+    <string name="owner_menu_get_verified">Get Verified</string>
+    <string name="owner_menu_get_verified_desc">Apply for a verified badge and build more trust with your audience.</string>
+    <string name="owner_menu_live_stream_desc">Broadcast live video to your followers</string>
+    <string name="owner_menu_market_desc">Discover products and shop in the community</string>
+    <string name="owner_menu_groups_desc">Connect with communities that share your interests</string>
+    <string name="owner_menu_memories_desc">Look back on your saved moments and highlights</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "Telefam",
+  "description": "Stay connected. Stay together. Secure family & community communication platform by Telefam Company.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
