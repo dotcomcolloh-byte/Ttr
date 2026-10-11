@@ -50,4 +50,7 @@ dependencies {
     // Environment & Logging
     implementation("io.github.cdimascio:dotenv-kotlin:6.5.0")
     implementation("ch.qos.logback:logback-classic:1.5.16")
+
+    // Automated backend tests
+    testImplementation(kotlin("test"))
 }

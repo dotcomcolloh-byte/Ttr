@@ -1,6 +1,7 @@
 package com.telefam.company.backend.routes
 
 import com.telefam.company.backend.db.TelefamDatabase
+import com.telefam.company.backend.notifications.FcmTokenSecurity
 import com.telefam.company.backend.security.SandboxImageProcessor
 import com.telefam.company.backend.security.SecurityRiskEngine
 import io.ktor.http.HttpStatusCode
@@ -21,6 +22,7 @@ import kotlinx.io.readByteArray
 import kotlinx.serialization.Serializable
 import java.time.LocalDate
 import java.time.Period
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -92,6 +94,36 @@ data class BackendPrivacySettingsPayload(
     val typingIndicators: String = "ANYONE",
     val onlineIndicators: String = "ANYONE",
     val syncVersion: Long = 1L
+)
+
+@Serializable
+data class BackendFcmTokenRegisterPayload(
+    val userId: String,
+    val fcmToken: String,
+    val fcmTokenSha256: String,
+    val deviceFingerprint: String,
+    val appVersion: String,
+    val platform: String = "ANDROID",
+    val e2eeWakeOnlyEnabled: Boolean = true,
+    val idempotencyKey: String,
+    val registeredAtMs: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class BackendFcmTokenRevokePayload(
+    val userId: String,
+    val fcmTokenSha256: String,
+    val deviceFingerprint: String,
+    val reason: String = "USER_LOGOUT_OR_REVOKE",
+    val idempotencyKey: String,
+    val revokedAtMs: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class BackendFcmTokenActionResponse(
+    val synced: Boolean = true,
+    val status: String = "OK",
+    val serverTimestampMs: Long = System.currentTimeMillis()
 )
 
 private val registeredUsernamesRegistry = ConcurrentHashMap.newKeySet<String>()
@@ -427,6 +459,68 @@ fun Application.registerTelefamRoutes(
                         "serverTimestampMs" to System.currentTimeMillis()
                     )
                 )
+            }
+        }
+
+        route("/v1/notifications/fcm-token") {
+            post("/register") {
+                val rlsUserId = call.request.header("X-Telefam-RLS-User-Id")?.trim()
+                    ?: throw IllegalArgumentException("Missing X-Telefam-RLS-User-Id header")
+                val idempotencyKey = call.request.header("X-Telefam-Idempotency-Key")?.trim()
+                    ?: throw IllegalArgumentException("Missing X-Telefam-Idempotency-Key header")
+                val payload = call.receive<BackendFcmTokenRegisterPayload>()
+                require(idempotencyKey == payload.idempotencyKey) { "Idempotency key mismatch" }
+                FcmTokenSecurity.validateRegistration(
+                    headerUserId = rlsUserId,
+                    payloadUserId = payload.userId,
+                    fcmToken = payload.fcmToken,
+                    fcmTokenSha256 = payload.fcmTokenSha256,
+                    deviceFingerprint = payload.deviceFingerprint,
+                    appVersion = payload.appVersion,
+                    platform = payload.platform,
+                    idempotencyKey = payload.idempotencyKey
+                )
+                val userId = runCatching { UUID.fromString(payload.userId) }
+                    .getOrElse { throw IllegalArgumentException("Invalid user id") }
+                TelefamDatabase.upsertFcmDeviceToken(
+                    userId = userId,
+                    fcmToken = payload.fcmToken,
+                    fcmTokenSha256 = payload.fcmTokenSha256,
+                    deviceFingerprint = payload.deviceFingerprint,
+                    appVersion = payload.appVersion,
+                    platform = payload.platform,
+                    e2eeWakeOnlyEnabled = payload.e2eeWakeOnlyEnabled,
+                    idempotencyKey = payload.idempotencyKey,
+                    registeredAt = Instant.ofEpochMilli(payload.registeredAtMs)
+                )
+                call.respond(BackendFcmTokenActionResponse())
+            }
+
+            post("/revoke") {
+                val rlsUserId = call.request.header("X-Telefam-RLS-User-Id")?.trim()
+                    ?: throw IllegalArgumentException("Missing X-Telefam-RLS-User-Id header")
+                val idempotencyKey = call.request.header("X-Telefam-Idempotency-Key")?.trim()
+                    ?: throw IllegalArgumentException("Missing X-Telefam-Idempotency-Key header")
+                val payload = call.receive<BackendFcmTokenRevokePayload>()
+                require(idempotencyKey == payload.idempotencyKey) { "Idempotency key mismatch" }
+                FcmTokenSecurity.validateRevocation(
+                    headerUserId = rlsUserId,
+                    payloadUserId = payload.userId,
+                    fcmTokenSha256 = payload.fcmTokenSha256,
+                    deviceFingerprint = payload.deviceFingerprint,
+                    idempotencyKey = payload.idempotencyKey
+                )
+                val userId = runCatching { UUID.fromString(payload.userId) }
+                    .getOrElse { throw IllegalArgumentException("Invalid user id") }
+                TelefamDatabase.revokeFcmDeviceToken(
+                    userId = userId,
+                    fcmTokenSha256 = payload.fcmTokenSha256,
+                    deviceFingerprint = payload.deviceFingerprint,
+                    reason = payload.reason,
+                    idempotencyKey = payload.idempotencyKey,
+                    revokedAt = Instant.ofEpochMilli(payload.revokedAtMs)
+                )
+                call.respond(BackendFcmTokenActionResponse())
             }
         }
 

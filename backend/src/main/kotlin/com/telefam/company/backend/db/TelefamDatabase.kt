@@ -201,4 +201,81 @@ object TelefamDatabase {
             }
         }
     }
+
+    fun upsertFcmDeviceToken(
+        userId: UUID,
+        fcmToken: String,
+        fcmTokenSha256: String,
+        deviceFingerprint: String,
+        appVersion: String,
+        platform: String,
+        e2eeWakeOnlyEnabled: Boolean,
+        idempotencyKey: String,
+        registeredAt: Instant
+    ) {
+        withRlsUserContext(userId) { conn ->
+            conn.prepareStatement(
+                """
+                INSERT INTO telefam_fcm_device_tokens (
+                    user_id, fcm_token, fcm_token_sha256, device_fingerprint,
+                    app_version, platform, e2ee_wake_only_enabled,
+                    last_idempotency_key, registered_at, last_seen_at,
+                    revoked_at, revoke_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                ON CONFLICT (fcm_token_sha256) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    fcm_token = EXCLUDED.fcm_token,
+                    device_fingerprint = EXCLUDED.device_fingerprint,
+                    app_version = EXCLUDED.app_version,
+                    platform = EXCLUDED.platform,
+                    e2ee_wake_only_enabled = EXCLUDED.e2ee_wake_only_enabled,
+                    last_idempotency_key = EXCLUDED.last_idempotency_key,
+                    last_seen_at = EXCLUDED.last_seen_at,
+                    revoked_at = NULL,
+                    revoke_reason = NULL
+                """.trimIndent()
+            ).use { ps ->
+                ps.setObject(1, userId)
+                ps.setString(2, fcmToken)
+                ps.setString(3, fcmTokenSha256.lowercase())
+                ps.setString(4, deviceFingerprint)
+                ps.setString(5, appVersion)
+                ps.setString(6, platform)
+                ps.setBoolean(7, e2eeWakeOnlyEnabled)
+                ps.setString(8, idempotencyKey)
+                ps.setTimestamp(9, Timestamp.from(registeredAt))
+                ps.setTimestamp(10, Timestamp.from(registeredAt))
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    fun revokeFcmDeviceToken(
+        userId: UUID,
+        fcmTokenSha256: String,
+        deviceFingerprint: String,
+        reason: String,
+        idempotencyKey: String,
+        revokedAt: Instant
+    ) {
+        withRlsUserContext(userId) { conn ->
+            conn.prepareStatement(
+                """
+                UPDATE telefam_fcm_device_tokens
+                SET revoked_at = ?, revoke_reason = ?, device_fingerprint = ?,
+                    last_idempotency_key = ?, last_seen_at = ?
+                WHERE user_id = ? AND fcm_token_sha256 = ?
+                """.trimIndent()
+            ).use { ps ->
+                ps.setTimestamp(1, Timestamp.from(revokedAt))
+                ps.setString(2, reason.take(128))
+                ps.setString(3, deviceFingerprint)
+                ps.setString(4, idempotencyKey)
+                ps.setTimestamp(5, Timestamp.from(revokedAt))
+                ps.setObject(6, userId)
+                ps.setString(7, fcmTokenSha256.lowercase())
+                ps.executeUpdate()
+            }
+        }
+    }
 }

@@ -485,3 +485,34 @@ CREATE TABLE IF NOT EXISTS telefam_chat_reactions (
 
 
 
+
+-- =============================================================================
+-- 17. FCM DEVICE TOKENS (SERVER-SIDE PUSH REGISTRATION)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS telefam_fcm_device_tokens (
+    token_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    fcm_token TEXT NOT NULL,
+    fcm_token_sha256 VARCHAR(64) NOT NULL UNIQUE,
+    device_fingerprint VARCHAR(128) NOT NULL,
+    app_version VARCHAR(64) NOT NULL,
+    platform VARCHAR(16) NOT NULL DEFAULT 'ANDROID' CHECK (platform IN ('ANDROID')),
+    e2ee_wake_only_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    last_idempotency_key VARCHAR(128) NOT NULL,
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ,
+    revoke_reason VARCHAR(128)
+);
+CREATE INDEX IF NOT EXISTS idx_telefam_fcm_tokens_user_active
+    ON telefam_fcm_device_tokens(user_id, last_seen_at DESC)
+    WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_telefam_fcm_tokens_device
+    ON telefam_fcm_device_tokens(user_id, device_fingerprint);
+ALTER TABLE telefam_fcm_device_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE telefam_fcm_device_tokens FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS rls_fcm_tokens_owner_only ON telefam_fcm_device_tokens;
+CREATE POLICY rls_fcm_tokens_owner_only ON telefam_fcm_device_tokens
+    FOR ALL
+    USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)
+    WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
