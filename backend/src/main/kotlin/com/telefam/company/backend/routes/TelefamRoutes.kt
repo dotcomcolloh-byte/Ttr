@@ -126,6 +126,60 @@ data class BackendFcmTokenActionResponse(
     val serverTimestampMs: Long = System.currentTimeMillis()
 )
 
+@Serializable
+data class BackendSyncResponse(
+    val synced: Boolean = true,
+    val status: String = "OK",
+    val domain: String = "api.telefam.company",
+    val serverTimestampMs: Long = System.currentTimeMillis(),
+    val resendWaitSeconds: Int? = null
+)
+
+@Serializable
+data class BackendPreKeyBundleResponse(
+    val userId: String,
+    val registrationId: Int = 0,
+    val identityPublicKeyBase64: String = "",
+    val signedPreKeyId: Int = 0,
+    val signedPreKeyPublicBase64: String = "",
+    val signedPreKeySignatureBase64: String = "",
+    val oneTimePreKeys: List<String> = emptyList(),
+    val serverTimestampMs: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class BackendLiveTokenResponse(
+    val synced: Boolean = true,
+    val liveSessionToken: String,
+    val expiresAtMs: Long,
+    val issuedAtMs: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class BackendKlipyResponse(
+    val synced: Boolean = true,
+    val tab: String,
+    val query: String,
+    val page: Int,
+    val hasNextPage: Boolean = false,
+    val items: List<String> = emptyList()
+)
+
+@Serializable
+data class BackendQrResponse(
+    val synced: Boolean = true,
+    val qrPayloadUrl: String,
+    val qrSignatureToken: String,
+    val issuedAtMs: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class BackendDirectoryResponse(
+    val synced: Boolean = true,
+    val refreshedAtMs: Long = System.currentTimeMillis(),
+    val users: List<String> = emptyList()
+)
+
 private val registeredUsernamesRegistry = ConcurrentHashMap.newKeySet<String>()
 private val privacySettingsCache = ConcurrentHashMap<String, BackendPrivacySettingsPayload>()
 private val ownerProfileCache = ConcurrentHashMap<String, BackendOwnerProfileUpdatePayload>()
@@ -614,70 +668,67 @@ fun Application.registerTelefamRoutes(
         }
 
         // Network synchronization endpoints used by the Android repositories.
-        // They acknowledge idempotent client operations while local Room remains the
-        // offline-first source of truth for this deployment stage.
         route("/v1/auth") {
-            post("/telemetry-sync") { call.respond(mapOf("synced" to true, "domain" to "api.telefam.company", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/google") { call.respond(mapOf("synced" to true, "status" to "AUTHENTICATED", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/otp/send") { call.respond(mapOf("synced" to true, "status" to "OTP_SENT", "resendWaitSeconds" to 60, "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/otp/verify") { call.respond(mapOf("synced" to true, "status" to "OTP_VERIFIED", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/password/reset") { call.respond(mapOf("synced" to true, "status" to "PASSWORD_RESET", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/logout") { call.respond(mapOf("synced" to true, "status" to "LOGGED_OUT", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/passkey/verify") { call.respond(mapOf("synced" to true, "status" to "AUTHENTICATED", "serverTimestampMs" to System.currentTimeMillis())) }
+            post("/telemetry-sync") { call.respond(BackendSyncResponse()) }
+            post("/google") { call.respond(BackendSyncResponse(status = "AUTHENTICATED")) }
+            post("/otp/send") { call.respond(BackendSyncResponse(status = "OTP_SENT", resendWaitSeconds = 60)) }
+            post("/otp/verify") { call.respond(BackendSyncResponse(status = "OTP_VERIFIED")) }
+            post("/password/reset") { call.respond(BackendSyncResponse(status = "PASSWORD_RESET")) }
+            post("/logout") { call.respond(BackendSyncResponse(status = "LOGGED_OUT")) }
+            post("/passkey/verify") { call.respond(BackendSyncResponse(status = "AUTHENTICATED")) }
         }
         route("/v1/settings") {
-            put("/account-security") { call.respond(mapOf("synced" to true, "domain" to "api.telefam.company", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/otp/send") { call.respond(mapOf("synced" to true, "status" to "OTP_SENT", "serverTimestampMs" to System.currentTimeMillis())) }
+            put("/account-security") { call.respond(BackendSyncResponse()) }
+            post("/otp/send") { call.respond(BackendSyncResponse(status = "OTP_SENT")) }
         }
         route("/v1/account") {
-            post("/lifecycle") { call.respond(mapOf("synced" to true, "status" to "ACCEPTED", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/password/change") { call.respond(mapOf("synced" to true, "status" to "PASSWORD_CHANGED", "serverTimestampMs" to System.currentTimeMillis())) }
+            post("/lifecycle") { call.respond(BackendSyncResponse(status = "ACCEPTED")) }
+            post("/password/change") { call.respond(BackendSyncResponse(status = "PASSWORD_CHANGED")) }
         }
         route("/v1/support") {
-            post("/tickets") { call.respond(mapOf("synced" to true, "status" to "TICKET_ACCEPTED", "serverTimestampMs" to System.currentTimeMillis())) }
+            post("/tickets") { call.respond(BackendSyncResponse(status = "TICKET_ACCEPTED")) }
         }
         route("/v1/security") {
-            post("/revoke-session") { call.respond(mapOf("synced" to true, "status" to "REVOKED", "serverTimestampMs" to System.currentTimeMillis())) }
+            post("/revoke-session") { call.respond(BackendSyncResponse(status = "REVOKED")) }
         }
         route("/v1/profile") {
             post("/qr-code/issue") {
-                call.respond(mapOf("synced" to true, "qrPayloadUrl" to "https://telefam.company/profile/qr", "qrSignatureToken" to UUID.randomUUID().toString(), "issuedAtMs" to System.currentTimeMillis()))
+                call.respond(BackendQrResponse(qrPayloadUrl = "https://telefam.company/profile/qr", qrSignatureToken = UUID.randomUUID().toString()))
             }
         }
         route("/v1/chat") {
-            post("/prekeys/upload") { call.respond(mapOf("synced" to true, "status" to "PREKEYS_STORED", "serverTimestampMs" to System.currentTimeMillis())) }
+            post("/prekeys/upload") { call.respond(BackendSyncResponse(status = "PREKEYS_STORED")) }
             get("/prekeys/bundle") {
-                val userId = call.request.queryParameters["targetUserId"].orEmpty()
-                call.respond(mapOf("userId" to userId, "registrationId" to 0, "identityPublicKeyBase64" to "", "signedPreKeyId" to 0, "signedPreKeyPublicBase64" to "", "signedPreKeySignatureBase64" to "", "oneTimePreKeys" to emptyList<Any>(), "serverTimestampMs" to System.currentTimeMillis()))
+                call.respond(BackendPreKeyBundleResponse(userId = call.request.queryParameters["targetUserId"].orEmpty()))
             }
-            get("/contacts") { call.respond(mapOf("synced" to true, "refreshedAtMs" to System.currentTimeMillis(), "users" to emptyList<Any>())) }
-            post("/send") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/forward") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/delivery") { call.respond(mapOf("synced" to true, "status" to "DELIVERED", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/seen") { call.respond(mapOf("synced" to true, "status" to "SEEN", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/typing") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/presence") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/edit") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/unsend") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/delete") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/view-once/consume") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/pin") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/favourite") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/react") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/disappearing") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/block") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/report") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/clear") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/location/live-token") { call.respond(mapOf("synced" to true, "liveSessionToken" to UUID.randomUUID().toString(), "expiresAtMs" to System.currentTimeMillis() + 15 * 60_000L, "issuedAtMs" to System.currentTimeMillis())) }
-            post("/poll/vote") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
-            post("/event/rsvp") { call.respond(mapOf("synced" to true, "status" to "OK", "serverTimestampMs" to System.currentTimeMillis())) }
+            get("/contacts") { call.respond(BackendDirectoryResponse()) }
+            post("/send") { call.respond(BackendSyncResponse()) }
+            post("/forward") { call.respond(BackendSyncResponse()) }
+            post("/delivery") { call.respond(BackendSyncResponse(status = "DELIVERED")) }
+            post("/seen") { call.respond(BackendSyncResponse(status = "SEEN")) }
+            post("/typing") { call.respond(BackendSyncResponse()) }
+            post("/presence") { call.respond(BackendSyncResponse()) }
+            post("/edit") { call.respond(BackendSyncResponse()) }
+            post("/unsend") { call.respond(BackendSyncResponse()) }
+            post("/delete") { call.respond(BackendSyncResponse()) }
+            post("/view-once/consume") { call.respond(BackendSyncResponse()) }
+            post("/pin") { call.respond(BackendSyncResponse()) }
+            post("/favourite") { call.respond(BackendSyncResponse()) }
+            post("/react") { call.respond(BackendSyncResponse()) }
+            post("/disappearing") { call.respond(BackendSyncResponse()) }
+            post("/block") { call.respond(BackendSyncResponse()) }
+            post("/report") { call.respond(BackendSyncResponse()) }
+            post("/clear") { call.respond(BackendSyncResponse()) }
+            post("/location/live-token") {
+                val now = System.currentTimeMillis()
+                call.respond(BackendLiveTokenResponse(liveSessionToken = UUID.randomUUID().toString(), expiresAtMs = now + 15 * 60_000L, issuedAtMs = now))
+            }
+            post("/poll/vote") { call.respond(BackendSyncResponse()) }
+            post("/event/rsvp") { call.respond(BackendSyncResponse()) }
         }
         route("/v1/klipy") {
             get("/media") {
-                val tab = call.request.queryParameters["tab"] ?: "STICKERS"
-                val query = call.request.queryParameters["query"].orEmpty()
-                val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
-                call.respond(mapOf("synced" to true, "tab" to tab, "query" to query, "page" to page, "hasNextPage" to false, "items" to emptyList<Any>()))
+                call.respond(BackendKlipyResponse(tab = call.request.queryParameters["tab"] ?: "STICKERS", query = call.request.queryParameters["query"].orEmpty(), page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1))
             }
         }
     }
