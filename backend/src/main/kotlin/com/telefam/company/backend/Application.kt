@@ -23,6 +23,40 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+
+private data class DatabaseConnection(
+    val jdbcUrl: String,
+    val username: String?,
+    val password: String?
+)
+
+private fun databaseConnectionFromEnv(env: io.github.cdimascio.dotenv.Dotenv): DatabaseConnection {
+    val rawUrl = env["POSTGRES_JDBC_URL"] ?: env["DATABASE_URL"]
+    if (rawUrl.isNullOrBlank()) {
+        return DatabaseConnection(
+            jdbcUrl = "jdbc:postgresql://db.telefam.company:5432/telefam_production",
+            username = env["POSTGRES_USER"],
+            password = env["POSTGRES_PASSWORD"]
+        )
+    }
+    if (rawUrl.startsWith("jdbc:", ignoreCase = true)) {
+        return DatabaseConnection(rawUrl, env["POSTGRES_USER"], env["POSTGRES_PASSWORD"])
+    }
+    val uri = URI(rawUrl)
+    val userInfo = uri.userInfo?.split(":", limit = 2)
+    val username = userInfo?.getOrNull(0)?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
+    val password = userInfo?.getOrNull(1)?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
+    val database = uri.path.orEmpty().trimStart('/').ifBlank { "railway" }
+    val port = if (uri.port > 0) uri.port else 5432
+    return DatabaseConnection(
+        jdbcUrl = "jdbc:postgresql://${uri.host}:$port/$database?sslmode=require",
+        username = env["POSTGRES_USER"] ?: username,
+        password = env["POSTGRES_PASSWORD"] ?: password
+    )
+}
 
 fun main() {
     val env = dotenv {
@@ -37,11 +71,12 @@ fun main() {
 }
 
 fun Application.telefamBackendModule(env: io.github.cdimascio.dotenv.Dotenv) {
+    val database = databaseConnectionFromEnv(env)
     TelefamDatabase.init(
-        jdbcUrl = env["POSTGRES_JDBC_URL"] ?: "jdbc:postgresql://db.telefam.company:5432/telefam_production",
-        dbUser = env["POSTGRES_USER"] ?: "telefam_core_rw",
-        dbPassword = env["POSTGRES_PASSWORD"] ?: "",
-        maxPoolSize = (env["POSTGRES_MAX_POOL_SIZE"] ?: "24").toInt()
+        jdbcUrl = database.jdbcUrl,
+        dbUser = database.username ?: "telefam_core_rw",
+        dbPassword = database.password ?: "",
+        maxPoolSize = (env["POSTGRES_MAX_POOL_SIZE"] ?: "5").toInt()
     )
 
     val riskEngine = SecurityRiskEngine(
