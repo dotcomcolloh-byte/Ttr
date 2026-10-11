@@ -781,7 +781,48 @@ interface TelefamRemoteApiService {
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 24
     ): KlipyProxyPageResponse
+
+    @POST("/v1/notifications/fcm-token/register")
+    suspend fun registerDeviceFcmToken(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamFcmTokenRegisterPayload
+    ): TelefamFcmTokenActionResponse
+
+    @POST("/v1/notifications/fcm-token/revoke")
+    suspend fun revokeDeviceFcmToken(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamFcmTokenRevokePayload
+    ): TelefamFcmTokenActionResponse
 }
+
+data class TelefamFcmTokenRegisterPayload(
+    val userId: String,
+    val fcmToken: String,
+    val fcmTokenSha256: String,
+    val deviceFingerprint: String,
+    val appVersion: String,
+    val platform: String = "ANDROID",
+    val e2eeWakeOnlyEnabled: Boolean = true,
+    val idempotencyKey: String,
+    val registeredAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamFcmTokenRevokePayload(
+    val userId: String,
+    val fcmTokenSha256: String,
+    val deviceFingerprint: String,
+    val reason: String = "USER_LOGOUT_OR_REVOKE",
+    val idempotencyKey: String,
+    val revokedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamFcmTokenActionResponse(
+    val synced: Boolean = true,
+    val status: String = "OK",
+    val serverTimestampMs: Long = System.currentTimeMillis()
+)
 
 object TelefamNetworkClient {
 

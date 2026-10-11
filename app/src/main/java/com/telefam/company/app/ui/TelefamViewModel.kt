@@ -71,6 +71,9 @@ import com.telefam.company.app.domain.TelefamInputSanitizer
 import com.telefam.company.app.domain.TelefamSettingsCatalog
 import com.telefam.company.app.domain.TelefamValidators
 import com.telefam.company.app.domain.UserPostItem
+import com.telefam.company.app.notifications.TelefamDeepLinkTargetType
+import com.telefam.company.app.notifications.TelefamNotificationDeepLink
+import com.telefam.company.app.notifications.TelefamNotificationEngine
 import com.telefam.company.app.security.AndroidSandboxMediaProcessor
 import com.telefam.company.app.security.TelefamCryptoAndTelemetry
 import androidx.paging.PagingData
@@ -1979,6 +1982,7 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
             state.activeSession?.let { sess ->
+                TelefamNotificationEngine.revokeFcmRegistrationToken(getApplication<Application>().applicationContext, sess.userId, "USER_LOGOUT")
                 repository.signOutCurrentSession(sess.userId, sess.email, telemetry)
             }
             val quickAccounts = settingsRepository.getSavedQuickLoginAccounts()
@@ -3082,6 +3086,7 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
      * Clears unread count, loads draft from Room, and observes messages/attachments from Room.
      */
     fun openOneToOneChatById(chatId: String) {
+        TelefamNotificationEngine.setActiveOpenChat(getApplication<Application>().applicationContext, chatId)
         viewModelScope.launch(safeExceptionHandler) {
             val ownerId = currentAuthenticatedUserId()
             val draftEntity = repository.dao.getDraftForChat(chatId)
@@ -3152,6 +3157,7 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun closeActiveOneToOneChat() {
+        TelefamNotificationEngine.setActiveOpenChat(getApplication<Application>().applicationContext, null)
         chatRepository.stopBubbleVoicePlayback()
         chatRepository.stopVoicePreviewPlayback()
         activeChatObserverJob?.cancel()
@@ -4148,6 +4154,66 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
                 peerUserId = peerId,
                 messageId = messageId
             )
+        }
+    }
+
+    fun handleNotificationDeepLink(deepLink: TelefamNotificationDeepLink) {
+        val state = _uiState.value
+        if (state.activeSession == null && state.savedProfile == null) return
+        TelefamNotificationEngine.consumePendingDeepLink()
+
+        when (deepLink.targetType) {
+            TelefamDeepLinkTargetType.CHAT_CONVERSATION,
+            TelefamDeepLinkTargetType.INCOMING_CALL,
+            TelefamDeepLinkTargetType.LIVE_LOCATION -> {
+                val targetChatId = deepLink.chatId
+                val peerId = deepLink.peerUserId
+                if (!targetChatId.isNullOrBlank()) {
+                    openOneToOneChatById(targetChatId)
+                } else if (!peerId.isNullOrBlank()) {
+                    val existing = state.chatListItems.firstOrNull { it.peerUserId == peerId }
+                    if (existing != null) {
+                        openOneToOneChatById(existing.chatId)
+                    } else {
+                        val user = state.contactsUsers.firstOrNull { it.userId == peerId }
+                        if (user != null) {
+                            openOneToOneChatWithDiscoverableUser(user)
+                        }
+                    }
+                }
+            }
+            TelefamDeepLinkTargetType.SOCIAL_FOLLOWER -> {
+                val actorId = deepLink.socialActorUserId
+                val actor = state.contactsUsers.firstOrNull { it.userId == actorId }
+                if (actor != null) {
+                    openPublicUserProfile(actor.userId)
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            destination = AppDestination.MAIN_HOME,
+                            selectedHomeTab = HomeNavTab.PROFILE
+                        )
+                    }
+                    openOwnerFollowList(FollowListType.FOLLOWERS)
+                }
+            }
+            TelefamDeepLinkTargetType.SOCIAL_POST_ACTIVITY -> {
+                _uiState.update {
+                    it.copy(
+                        destination = AppDestination.MAIN_HOME,
+                        selectedHomeTab = HomeNavTab.PROFILE
+                    )
+                }
+            }
+            TelefamDeepLinkTargetType.SECURITY_DEVICE_ALERT -> {
+                _uiState.update {
+                    it.copy(
+                        destination = AppDestination.SETTINGS_AND_PRIVACY,
+                        settingsSubScreen = SettingsSubScreen.ROOT,
+                        settingsNavigationStack = emptyList()
+                    )
+                }
+            }
         }
     }
 }

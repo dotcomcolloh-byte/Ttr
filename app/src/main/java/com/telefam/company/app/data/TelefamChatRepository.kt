@@ -22,6 +22,7 @@ import com.telefam.company.app.domain.E2eeVerificationSnapshot
 import com.telefam.company.app.domain.KlipyMediaItem
 import com.telefam.company.app.domain.KlipyMediaTab
 import com.telefam.company.app.domain.OneToOneChatListItem
+import com.telefam.company.app.notifications.TelefamNotificationEngine
 import com.telefam.company.app.security.PreKeyBundleDto
 import com.telefam.company.app.security.TelefamAggressiveCompressionEngine
 import com.telefam.company.app.security.TelefamCryptoAndTelemetry
@@ -451,6 +452,7 @@ class TelefamChatRepository(
             if (connectedOwnerUserId != ownerUserId || activeWebSocket == null) {
                 connectedOwnerUserId = ownerUserId
                 connectWebSocketInternal(ownerUserId)
+                TelefamNotificationEngine.syncFcmRegistrationToken(context, ownerUserId)
             }
         }
     }
@@ -543,6 +545,12 @@ class TelefamChatRepository(
                         dao.deletePin(chatId, msgId)
                         dao.deleteFavouritesForMessage(msgId)
                         refreshChatLastMessageSummary(chatId)
+                        TelefamNotificationEngine.onMessageUnsentOrDeleted(
+                            context = context,
+                            ownerUserId = ownerUserId,
+                            chatId = chatId,
+                            messageId = msgId
+                        )
                     }
                 }
                 "VIEW_ONCE_CONSUMED" -> {
@@ -672,8 +680,59 @@ class TelefamChatRepository(
                                     )
                                 )
                             }
+                            TelefamNotificationEngine.postIncomingChatMessageNotification(
+                                context = context,
+                                ownerUserId = ownerUserId,
+                                message = msgEntity
+                            )
                         }
                     }
+                }
+                "INCOMING_CALL", "LIVE_LOCATION" -> {
+                    val chatId = obj.optString("chatId")
+                    val peerUserId = obj.optString("senderUserId")
+                    val peerName = obj.optString("senderDisplayName").ifBlank { "Telefam Contact" }
+                    val isCall = obj.optString("eventType") == "INCOMING_CALL"
+                    val isVideoCall = obj.optBoolean("isVideoCall", false)
+                    val subtitle = obj.optString("subtitle")
+                    TelefamNotificationEngine.postIncomingCallOrLiveLocationNotification(
+                        context = context,
+                        ownerUserId = ownerUserId,
+                        chatId = chatId,
+                        peerUserId = peerUserId,
+                        peerDisplayName = peerName,
+                        isCall = isCall,
+                        isVideoCall = isVideoCall,
+                        subtitle = subtitle
+                    )
+                }
+                "SOCIAL_ACTIVITY" -> {
+                    val actorUserId = obj.optString("actorUserId")
+                    val actorDisplayName = obj.optString("actorDisplayName").ifBlank { "Telefam Member" }
+                    val activityKind = obj.optString("activityKind", "FOLLOW")
+                    val commentPreview = obj.optString("commentPreview")
+                    val postId = obj.optString("postId").takeIf { it.isNotBlank() }
+                    TelefamNotificationEngine.postSocialActivityNotification(
+                        context = context,
+                        ownerUserId = ownerUserId,
+                        actorUserId = actorUserId,
+                        actorDisplayName = actorDisplayName,
+                        activityKind = activityKind,
+                        commentPreview = commentPreview,
+                        postId = postId
+                    )
+                }
+                "SECURITY_DEVICE_ALERT" -> {
+                    val title = obj.optString("title").ifBlank { "New Device Sign-In Detected" }
+                    val body = obj.optString("body").ifBlank {
+                        "Your Telefam account was accessed from a new device. Tap to review trusted devices."
+                    }
+                    TelefamNotificationEngine.postSecurityDeviceLoginNotification(
+                        context = context,
+                        ownerUserId = ownerUserId,
+                        title = title,
+                        body = body
+                    )
                 }
             }
         }
@@ -835,6 +894,7 @@ class TelefamChatRepository(
     ) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         dao.clearChatUnreadCount(chatId)
+        TelefamNotificationEngine.cancelChatNotification(context, chatId)
         val privacy = dao.getPrivacySettings(ownerUserId)
         val sendReadReceipts = privacy?.readReceipts?.uppercase() != "NOBODY"
         if (sendReadReceipts) {
@@ -1336,6 +1396,12 @@ class TelefamChatRepository(
         dao.deletePin(chatId, messageId)
         dao.deleteFavouritesForMessage(messageId)
         refreshChatLastMessageSummary(chatId)
+        TelefamNotificationEngine.onMessageUnsentOrDeleted(
+            context = context,
+            ownerUserId = ownerUserId,
+            chatId = chatId,
+            messageId = messageId
+        )
 
         val now = System.currentTimeMillis()
         val idempKey = TelefamCryptoAndTelemetry.sha256Hex("unsend:$messageId:$now".toByteArray(Charsets.UTF_8))
@@ -1744,6 +1810,7 @@ class TelefamChatRepository(
         peerUserId: String
     ) = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
+        TelefamNotificationEngine.cancelChatNotification(context, chatId)
         dao.deleteAllMessagesForChat(chatId)
         dao.deleteAllReactionsForChat(chatId)
         dao.deleteAllPinsForChat(chatId)

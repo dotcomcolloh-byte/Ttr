@@ -1,6 +1,7 @@
 package com.telefam.company.app.ui
 
 import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
@@ -17,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.resolveTelefamDarkTheme
+import com.telefam.company.app.notifications.TelefamNotificationEngine
 import com.telefam.company.app.ui.screens.AuthScreen
 import com.telefam.company.app.ui.screens.E2eeVerificationScreen
 import com.telefam.company.app.ui.screens.MainHomeScreen
@@ -34,23 +36,33 @@ fun TelefamRootApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val voiceRecordingState by viewModel.voiceRecordingState.collectAsStateWithLifecycle()
     val bubblePlaybackState by viewModel.bubblePlaybackState.collectAsStateWithLifecycle()
+    val pendingDeepLink by TelefamNotificationEngine.pendingDeepLink.collectAsStateWithLifecycle()
     val klipyPagingItems = viewModel.klipyPagedFlow.collectAsLazyPagingItems()
     val context = LocalContext.current
     val resolvedDarkTheme = resolveTelefamDarkTheme(uiState.accountSettings.appThemeMode)
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
+    val startupPermissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         viewModel.onLocationPermissionResult()
     }
 
     LaunchedEffect(Unit) {
-        locationPermissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-        )
+        val permissionsToRequest = buildList {
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+        startupPermissionsLauncher.launch(permissionsToRequest)
+    }
+
+    LaunchedEffect(pendingDeepLink, uiState.activeSession, uiState.destination) {
+        val link = pendingDeepLink
+        if (link != null && uiState.destination != AppDestination.LAUNCH_ANIMATION && uiState.destination != AppDestination.AUTH) {
+            viewModel.handleNotificationDeepLink(link)
+        }
     }
 
     MyApplicationTheme(darkTheme = resolvedDarkTheme) {

@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -24,9 +25,17 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_telefam_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="telefam_channel_messages" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
             android:windowSoftInputMode="adjustResize"
             android:label="@string/app_name"
@@ -37,6 +46,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name="com.telefam.company.app.notifications.TelefamFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="com.telefam.company.app.notifications.TelefamNotificationActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.telefam.company.app.action.NOTIFICATION_DIRECT_REPLY" />
+                <action android:name="com.telefam.company.app.action.NOTIFICATION_MARK_AS_READ" />
+                <action android:name="com.telefam.company.app.action.NOTIFICATION_MUTE_CHAT" />
+                <action android:name="com.telefam.company.app.action.NOTIFICATION_DISMISS_URGENT" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
