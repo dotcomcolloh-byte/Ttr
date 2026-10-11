@@ -17,6 +17,8 @@ import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.forwardedheaders.XForwardedHeaders
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
 import kotlinx.serialization.json.Json
@@ -88,6 +90,12 @@ fun Application.telefamBackendModule(env: io.github.cdimascio.dotenv.Dotenv) {
                 HttpStatusCode.TooManyRequests,
                 mapOf("status" to "SECURITY_BLOCK", "message" to (cause.message ?: "Request blocked by security policy"))
             )
+        }
+    }
+
+    routing {
+        get("/health") {
+            call.respond(mapOf("status" to "ok"))
         }
     }
 
