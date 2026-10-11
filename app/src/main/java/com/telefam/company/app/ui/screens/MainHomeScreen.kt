@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubble
@@ -69,6 +70,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -156,7 +158,9 @@ fun MainHomeScreen(
     onOwnerClearStatusBanner: () -> Unit = {},
     onOpenSettingsAndPrivacy: () -> Unit = {},
     onOpenOwnerMenu: () -> Unit = {},
-    onCloseOwnerMenu: () -> Unit = {}
+    onCloseOwnerMenu: () -> Unit = {},
+    onOpenOneToOneChat: (String) -> Unit = {},
+    onChatSearchQueryChanged: (String) -> Unit = {}
 ) {
     val comingSoonTitle = stringResource(R.string.coming_soon_title)
     var activeComingSoonFeature by remember { mutableStateOf<String?>(null) }
@@ -176,7 +180,6 @@ fun MainHomeScreen(
     val circleTint = if (isDark) TelefamAvatarCircleDark else TelefamAvatarCircleLight
 
     val searchLabel = stringResource(R.string.search_chats_placeholder)
-    val startConvLabel = stringResource(R.string.start_conversation_button)
     val postLabel = stringResource(R.string.nav_post)
 
     BoxWithConstraints(
@@ -202,8 +205,10 @@ fun MainHomeScreen(
                     }
                 },
                 onSearchClicked = { activeComingSoonFeature = searchLabel },
+                onChatSearchQueryChanged = onChatSearchQueryChanged,
                 onMoreOptionsClicked = onOpenPrivacySettings,
-                onStartConversationClicked = { activeComingSoonFeature = startConvLabel },
+                onStartConversationClicked = { onSelectTab(HomeNavTab.CONTACTS) },
+                onOpenOneToOneChat = onOpenOneToOneChat,
                 onContactsFilterSelected = onContactsFilterSelected,
                 onToggleContactsSearch = onToggleContactsSearch,
                 onContactsSearchQueryChanged = onContactsSearchQueryChanged,
@@ -252,8 +257,10 @@ fun MainHomeScreen(
                     }
                 },
                 onSearchClicked = { activeComingSoonFeature = searchLabel },
+                onChatSearchQueryChanged = onChatSearchQueryChanged,
                 onMoreOptionsClicked = onOpenPrivacySettings,
-                onStartConversationClicked = { activeComingSoonFeature = startConvLabel },
+                onStartConversationClicked = { onSelectTab(HomeNavTab.CONTACTS) },
+                onOpenOneToOneChat = onOpenOneToOneChat,
                 onContactsFilterSelected = onContactsFilterSelected,
                 onToggleContactsSearch = onToggleContactsSearch,
                 onContactsSearchQueryChanged = onContactsSearchQueryChanged,
@@ -376,8 +383,10 @@ private fun MobileAndTabletHomeLayout(
     placeholderColor: Color,
     onSelectTab: (HomeNavTab) -> Unit,
     onSearchClicked: () -> Unit,
+    onChatSearchQueryChanged: (String) -> Unit,
     onMoreOptionsClicked: () -> Unit,
     onStartConversationClicked: () -> Unit,
+    onOpenOneToOneChat: (String) -> Unit,
     onContactsFilterSelected: (ContactsFilterMode) -> Unit,
     onToggleContactsSearch: (Boolean) -> Unit,
     onContactsSearchQueryChanged: (String) -> Unit,
@@ -426,7 +435,7 @@ private fun MobileAndTabletHomeLayout(
                     .padding( start = 16.dp, end = 8.dp, top = 6.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Slim Pill Search Bar
+                // Slim Pill Search Bar (Real live Room filter on CHATS tab)
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.surface,
@@ -434,7 +443,6 @@ private fun MobileAndTabletHomeLayout(
                         .weight(1f)
                         .height(36.dp)
                         .clip(RoundedCornerShape(50))
-                        .clickable(onClick = onSearchClicked)
                         .testTag("home_search_bar")
                 ) {
                     Row(
@@ -450,13 +458,40 @@ private fun MobileAndTabletHomeLayout(
                             tint = placeholderColor,
                             modifier = Modifier.size(16.dp)
                         )
-                        Text(
-                            text = stringResource(R.string.search_chats_placeholder),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                            color = placeholderColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (uiState.chatListSearchQuery.isEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.search_chats_placeholder),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                    color = placeholderColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            BasicTextField(
+                                value = uiState.chatListSearchQuery,
+                                onValueChange = onChatSearchQueryChanged,
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                ),
+                                cursorBrush = SolidColor(TelefamRed),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("home_chats_search_input")
+                            )
+                        }
+                        if (uiState.chatListSearchQuery.isNotEmpty()) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.crop_cancel_button),
+                                tint = placeholderColor,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { onChatSearchQueryChanged("") }
+                            )
+                        }
                     }
                 }
 
@@ -489,11 +524,12 @@ private fun MobileAndTabletHomeLayout(
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Main Tab Content
+                val useZeroHorizontalPadding = isFullEdgeTab || selectedTab == HomeNavTab.CHATS
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = if (isFullEdgeTab) 0.dp else 24.dp),
+                        .padding(horizontal = if (useZeroHorizontalPadding) 0.dp else 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     HomeTabBodyContent(
@@ -501,6 +537,7 @@ private fun MobileAndTabletHomeLayout(
                         selectedTab = selectedTab,
                         circleTint = circleTint,
                         onStartConversationClicked = onStartConversationClicked,
+                        onOpenOneToOneChat = onOpenOneToOneChat,
                         onContactsFilterSelected = onContactsFilterSelected,
                         onToggleContactsSearch = onToggleContactsSearch,
                         onContactsSearchQueryChanged = onContactsSearchQueryChanged,
@@ -557,8 +594,10 @@ private fun DesktopHomeLayout(
     placeholderColor: Color,
     onSelectTab: (HomeNavTab) -> Unit,
     onSearchClicked: () -> Unit,
+    onChatSearchQueryChanged: (String) -> Unit,
     onMoreOptionsClicked: () -> Unit,
     onStartConversationClicked: () -> Unit,
+    onOpenOneToOneChat: (String) -> Unit,
     onContactsFilterSelected: (ContactsFilterMode) -> Unit,
     onToggleContactsSearch: (Boolean) -> Unit,
     onContactsSearchQueryChanged: (String) -> Unit,
@@ -631,7 +670,6 @@ private fun DesktopHomeLayout(
                     .weight(1f, fill = false)
                     .height(36.dp)
                     .clip(RoundedCornerShape(50))
-                    .clickable(onClick = onSearchClicked)
                     .testTag("home_search_bar")
             ) {
                 Row(
@@ -647,13 +685,30 @@ private fun DesktopHomeLayout(
                         tint = placeholderColor,
                         modifier = Modifier.size(16.dp)
                     )
-                    Text(
-                        text = stringResource(R.string.search_chats_placeholder),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                        color = placeholderColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (uiState.chatListSearchQuery.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.search_chats_placeholder),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                color = placeholderColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        BasicTextField(
+                            value = uiState.chatListSearchQuery,
+                            onValueChange = onChatSearchQueryChanged,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            cursorBrush = SolidColor(TelefamRed),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("home_chats_search_input")
+                        )
+                    }
                 }
             }
 
@@ -812,7 +867,7 @@ private fun DesktopHomeLayout(
                 VerticalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
 
                 // Right Main Desktop Content Canvas
-                val isEdgeDesktopTab = selectedTab == HomeNavTab.CONTACTS || selectedTab == HomeNavTab.PROFILE
+                val isEdgeDesktopTab = selectedTab == HomeNavTab.CONTACTS || selectedTab == HomeNavTab.PROFILE || selectedTab == HomeNavTab.CHATS
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -825,6 +880,7 @@ private fun DesktopHomeLayout(
                         selectedTab = selectedTab,
                         circleTint = circleTint,
                         onStartConversationClicked = onStartConversationClicked,
+                        onOpenOneToOneChat = onOpenOneToOneChat,
                         onContactsFilterSelected = onContactsFilterSelected,
                         onToggleContactsSearch = onToggleContactsSearch,
                         onContactsSearchQueryChanged = onContactsSearchQueryChanged,
@@ -913,6 +969,7 @@ private fun HomeTabBodyContent(
     selectedTab: HomeNavTab,
     circleTint: Color,
     onStartConversationClicked: () -> Unit,
+    onOpenOneToOneChat: (String) -> Unit = {},
     onContactsFilterSelected: (ContactsFilterMode) -> Unit,
     onToggleContactsSearch: (Boolean) -> Unit,
     onContactsSearchQueryChanged: (String) -> Unit,
@@ -948,81 +1005,27 @@ private fun HomeTabBodyContent(
 ) {
     when (selectedTab) {
         HomeNavTab.CHATS -> {
-            // Exact match to uploaded Main Home image
-            Column(
-                modifier = Modifier
-                    .widthIn(max = 360.dp)
-                    .fillMaxWidth()
-                    .testTag("home_chats_empty_state"),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                // Soft Blush Circular Chat Bubbles Badge
-                Box(
-                    modifier = Modifier
-                        .size(84.dp)
-                        .clip(CircleShape)
-                        .background(circleTint),
-                    contentAlignment = Alignment.Center
-                ) {
-                    TelefamChatBubblesIllustration(
-                        modifier = Modifier.size(40.dp),
-                        tint = TelefamRed
-                    )
+            OneToOneChatsListSection(
+                chats = uiState.chatListItems,
+                searchQuery = uiState.chatListSearchQuery,
+                circleTint = circleTint,
+                onOpenChat = onOpenOneToOneChat,
+                onStartChatClick = onStartConversationClicked,
+                emptyStateIllustration = {
+                    Box(
+                        modifier = Modifier
+                            .size(84.dp)
+                            .clip(CircleShape)
+                            .background(circleTint),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        TelefamChatBubblesIllustration(
+                            modifier = Modifier.size(40.dp),
+                            tint = TelefamRed
+                        )
+                    }
                 }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Text(
-                    text = stringResource(R.string.start_conversation_title),
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = stringResource(R.string.start_conversation_subtitle),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 13.5.sp,
-                        lineHeight = 19.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(22.dp))
-
-                Button(
-                    onClick = onStartConversationClicked,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = TelefamRed,
-                        contentColor = Color.White
-                    ),
-                    elevation = ButtonDefaults.buttonElevation(
-                        defaultElevation = 4.dp,
-                        pressedElevation = 2.dp
-                    ),
-                    contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp),
-                    modifier = Modifier
-                        .height(46.dp)
-                        .testTag("start_conversation_button")
-                ) {
-                    Text(
-                        text = stringResource(R.string.start_conversation_button),
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = 14.5.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = Color.White
-                    )
-                }
-            }
+            )
         }
 
         HomeNavTab.CONTACTS -> {

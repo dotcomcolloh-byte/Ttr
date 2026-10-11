@@ -525,7 +525,6 @@ fun PublicUserProfileScreen(
 
                         Button(
                             onClick = {
-                                localBannerMessage = "$comingSoonTitle: $msgComingSoonDesc"
                                 onMessageComingSoonClick()
                             },
                             shape = RoundedCornerShape(10.dp),

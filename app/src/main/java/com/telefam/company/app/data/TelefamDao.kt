@@ -209,6 +209,18 @@ interface TelefamDao {
     @Query("SELECT * FROM telefam_user_blocks WHERE blocker_user_id = :blockerUserId ORDER BY created_at_ms DESC")
     fun observeBlockedUsers(blockerUserId: String): Flow<List<UserBlockEntity>>
 
+    @Query("SELECT * FROM telefam_user_blocks WHERE blocker_user_id = :blockerUserId ORDER BY created_at_ms DESC")
+    fun observeBlocksByUser(blockerUserId: String): Flow<List<UserBlockEntity>>
+
+    @Query("SELECT * FROM telefam_user_blocks WHERE blocked_user_id = :blockedUserId ORDER BY created_at_ms DESC")
+    fun observeBlocksAgainstUser(blockedUserId: String): Flow<List<UserBlockEntity>>
+
+    @Query("SELECT COUNT(*) FROM telefam_user_blocks WHERE (blocker_user_id = :userA AND blocked_user_id = :userB) OR (blocker_user_id = :userB AND blocked_user_id = :userA)")
+    suspend fun isEitherBlocked(userA: String, userB: String): Int
+
+    @Query("SELECT * FROM telefam_profiles WHERE user_id != :excludeUserId ORDER BY updated_at_ms DESC")
+    suspend fun getAllDiscoverableProfilesExcept(excludeUserId: String): List<ProfileEntity>
+
     @Query("SELECT * FROM telefam_user_blocks WHERE blocker_user_id = :blockerUserId AND blocked_user_id = :blockedUserId LIMIT 1")
     suspend fun getBlockRecord(blockerUserId: String, blockedUserId: String): UserBlockEntity?
 
@@ -324,4 +336,277 @@ interface TelefamDao {
 
     @Query("DELETE FROM telefam_quick_login_accounts WHERE user_id = :userId")
     suspend fun deleteQuickLoginAccount(userId: String)
+
+    // =========================================================================
+    // 1:1 CHATS, MESSAGES, REACTIONS, PINS, FAVOURITES, DISAPPEARING, RECEIPTS,
+    // DRAFTS, SIGNAL KEYS/SESSIONS, OUTBOX & KLIPY CACHE
+    // =========================================================================
+
+    @Query("SELECT * FROM telefam_chats WHERE owner_user_id = :ownerUserId ORDER BY last_message_at_ms DESC, updated_at_ms DESC")
+    fun observeChatsForOwner(ownerUserId: String): Flow<List<ChatEntity>>
+
+    @Query("SELECT * FROM telefam_chats WHERE owner_user_id = :ownerUserId ORDER BY last_message_at_ms DESC, updated_at_ms DESC")
+    suspend fun getChatsForOwner(ownerUserId: String): List<ChatEntity>
+
+    @Query("SELECT * FROM telefam_chats WHERE chat_id = :chatId LIMIT 1")
+    fun observeChatById(chatId: String): Flow<ChatEntity?>
+
+    @Query("SELECT * FROM telefam_chats WHERE chat_id = :chatId LIMIT 1")
+    suspend fun getChatById(chatId: String): ChatEntity?
+
+    @Query("SELECT * FROM telefam_chats WHERE owner_user_id = :ownerUserId AND peer_user_id = :peerUserId LIMIT 1")
+    suspend fun getChatByOwnerAndPeer(ownerUserId: String, peerUserId: String): ChatEntity?
+
+    @Query("SELECT * FROM telefam_chats WHERE owner_user_id = :ownerUserId AND peer_user_id = :peerUserId LIMIT 1")
+    suspend fun getChatByPeer(ownerUserId: String, peerUserId: String): ChatEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertChat(chat: ChatEntity)
+
+    @Query("UPDATE telefam_chats SET unread_count = 0 WHERE chat_id = :chatId")
+    suspend fun clearChatUnreadCount(chatId: String)
+
+    @Query("UPDATE telefam_chats SET is_peer_typing = :isTyping WHERE chat_id = :chatId")
+    suspend fun updateChatPeerTyping(chatId: String, isTyping: Boolean)
+
+    @Query("UPDATE telefam_chats SET is_peer_typing = :isTyping WHERE chat_id = :chatId")
+    suspend fun updatePeerTypingState(chatId: String, isTyping: Boolean)
+
+    @Query("UPDATE telefam_chats SET is_peer_online = :isOnline, peer_last_seen_ms = :lastSeenMs WHERE chat_id = :chatId")
+    suspend fun updateChatPeerPresence(chatId: String, isOnline: Boolean, lastSeenMs: Long?)
+
+    @Query("UPDATE telefam_chats SET is_peer_online = :isOnline, peer_last_seen_ms = COALESCE(:lastSeenMs, peer_last_seen_ms) WHERE chat_id = :chatId")
+    suspend fun updatePeerPresenceState(chatId: String, isOnline: Boolean, lastSeenMs: Long?)
+
+    @Query("UPDATE telefam_chats SET is_peer_account_deleted = :isDeleted WHERE chat_id = :chatId")
+    suspend fun updateChatPeerAccountDeleted(chatId: String, isDeleted: Boolean)
+
+    @Query("UPDATE telefam_chats SET is_e2ee_verified = :verified WHERE chat_id = :chatId")
+    suspend fun updateChatE2eeVerified(chatId: String, verified: Boolean)
+
+    // --- Messages ---
+    @Query("SELECT * FROM telefam_chat_messages WHERE chat_id = :chatId AND (expires_at_ms IS NULL OR expires_at_ms > :nowMs) ORDER BY created_at_ms ASC")
+    fun observeMessagesForChat(chatId: String, nowMs: Long = 0L): Flow<List<ChatMessageEntity>>
+
+    @Query("SELECT * FROM telefam_chat_messages WHERE chat_id = :chatId ORDER BY created_at_ms ASC")
+    suspend fun getMessagesForChat(chatId: String): List<ChatMessageEntity>
+
+    @Query("SELECT * FROM telefam_chat_messages WHERE message_id = :messageId LIMIT 1")
+    suspend fun getMessageById(messageId: String): ChatMessageEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertChatMessage(message: ChatMessageEntity)
+
+    @Query("UPDATE telefam_chat_messages SET delivery_status = :status, delivered_at_ms = COALESCE(:deliveredAtMs, delivered_at_ms), seen_at_ms = COALESCE(:seenAtMs, seen_at_ms) WHERE message_id = :messageId")
+    suspend fun updateMessageDeliveryStatus(messageId: String, status: String, deliveredAtMs: Long? = null, seenAtMs: Long? = null)
+
+    @Query("UPDATE telefam_chat_messages SET delivery_status = 'SEEN', seen_at_ms = :seenAtMs WHERE chat_id = :chatId AND sender_user_id != :ownerUserId AND delivery_status != 'SEEN'")
+    suspend fun markIncomingMessagesSeen(chatId: String, ownerUserId: String, seenAtMs: Long)
+
+    @Query("UPDATE telefam_chat_messages SET decrypted_text = :newText, ciphertext_base64 = :newCiphertext, ratchet_header_json = :newHeader, is_edited = 1, edited_at_ms = :editedAtMs WHERE message_id = :messageId")
+    suspend fun updateEditedMessage(messageId: String, newText: String, newCiphertext: String, newHeader: String, editedAtMs: Long)
+
+    @Query("UPDATE telefam_chat_messages SET decrypted_text = :newText, ciphertext_base64 = :newCiphertext, ratchet_header_json = :newHeader, is_edited = 1, edited_at_ms = :editedAtMs WHERE message_id = :messageId")
+    suspend fun updateMessageEdited(messageId: String, newText: String, newCiphertext: String, newHeader: String, editedAtMs: Long)
+
+    @Query("UPDATE telefam_chat_messages SET is_view_once_consumed = 1, media_local_path = NULL, media_url = NULL, ciphertext_base64 = '' WHERE message_id = :messageId")
+    suspend fun markViewOnceVoiceNoteConsumed(messageId: String)
+
+    @Query("UPDATE telefam_chat_messages SET is_view_once_consumed = 1, media_local_path = NULL, media_url = NULL, ciphertext_base64 = '' WHERE message_id = :messageId")
+    suspend fun markViewOnceConsumed(messageId: String)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE message_id = :messageId")
+    suspend fun deleteMessageById(messageId: String)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE message_id = :messageId")
+    suspend fun deleteMessageHard(messageId: String)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE message_id IN (:messageIds)")
+    suspend fun deleteMessagesByIds(messageIds: List<String>)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE chat_id = :chatId")
+    suspend fun deleteAllMessagesInChat(chatId: String)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE chat_id = :chatId")
+    suspend fun deleteAllMessagesForChat(chatId: String)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE expires_at_ms IS NOT NULL AND expires_at_ms <= :nowMs")
+    suspend fun purgeExpiredDisappearingMessages(nowMs: Long)
+
+    @Query("DELETE FROM telefam_chat_messages WHERE expires_at_ms IS NOT NULL AND expires_at_ms <= :nowMs")
+    suspend fun deleteExpiredMessages(nowMs: Long)
+
+    @Query("SELECT * FROM telefam_chat_messages WHERE chat_id = :chatId ORDER BY created_at_ms DESC LIMIT 1")
+    suspend fun getLatestMessageForChat(chatId: String): ChatMessageEntity?
+
+    // --- Reactions ---
+    @Query("SELECT * FROM telefam_message_reactions WHERE chat_id = :chatId ORDER BY created_at_ms ASC")
+    fun observeReactionsForChat(chatId: String): Flow<List<MessageReactionEntity>>
+
+    @Query("SELECT * FROM telefam_message_reactions WHERE message_id = :messageId AND reactor_user_id = :reactorUserId LIMIT 1")
+    suspend fun getReaction(messageId: String, reactorUserId: String): MessageReactionEntity?
+
+    @Query("SELECT * FROM telefam_message_reactions WHERE message_id = :messageId AND reactor_user_id = :reactorUserId LIMIT 1")
+    suspend fun getReactionByUser(messageId: String, reactorUserId: String): MessageReactionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertReaction(reaction: MessageReactionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMessageReaction(reaction: MessageReactionEntity)
+
+    @Query("DELETE FROM telefam_message_reactions WHERE message_id = :messageId AND reactor_user_id = :reactorUserId")
+    suspend fun deleteReaction(messageId: String, reactorUserId: String)
+
+    @Query("DELETE FROM telefam_message_reactions WHERE message_id = :messageId AND reactor_user_id = :reactorUserId")
+    suspend fun deleteReactionByUser(messageId: String, reactorUserId: String)
+
+    @Query("DELETE FROM telefam_message_reactions WHERE message_id = :messageId")
+    suspend fun deleteAllReactionsForMessage(messageId: String)
+
+    @Query("DELETE FROM telefam_message_reactions WHERE message_id = :messageId")
+    suspend fun deleteReactionsForMessage(messageId: String)
+
+    @Query("DELETE FROM telefam_message_reactions WHERE chat_id = :chatId")
+    suspend fun deleteAllReactionsForChat(chatId: String)
+
+    // --- Pins ---
+    @Query("SELECT * FROM telefam_chat_pins WHERE chat_id = :chatId ORDER BY pinned_at_ms DESC")
+    fun observePinsForChat(chatId: String): Flow<List<ChatPinEntity>>
+
+    @Query("SELECT p.* FROM telefam_chat_pins p INNER JOIN telefam_chats c ON p.chat_id = c.chat_id WHERE c.owner_user_id = :ownerUserId")
+    fun observeAllPinsForOwner(ownerUserId: String): Flow<List<ChatPinEntity>>
+
+    @Query("SELECT * FROM telefam_chat_pins WHERE chat_id = :chatId AND message_id = :messageId LIMIT 1")
+    suspend fun getPin(chatId: String, messageId: String): ChatPinEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPin(pin: ChatPinEntity)
+
+    @Query("DELETE FROM telefam_chat_pins WHERE chat_id = :chatId AND message_id = :messageId")
+    suspend fun deletePin(chatId: String, messageId: String)
+
+    @Query("DELETE FROM telefam_chat_pins WHERE message_id = :messageId")
+    suspend fun deletePinsForMessage(messageId: String)
+
+    @Query("DELETE FROM telefam_chat_pins WHERE chat_id = :chatId")
+    suspend fun deleteAllPinsForChat(chatId: String)
+
+    // --- Favourites ---
+    @Query("SELECT * FROM telefam_chat_favourites WHERE owner_user_id = :ownerUserId AND chat_id = :chatId ORDER BY favourited_at_ms DESC")
+    fun observeFavouritesForChat(ownerUserId: String, chatId: String): Flow<List<ChatFavouriteEntity>>
+
+    @Query("SELECT * FROM telefam_chat_favourites WHERE owner_user_id = :ownerUserId AND message_id = :messageId LIMIT 1")
+    suspend fun getFavourite(ownerUserId: String, messageId: String): ChatFavouriteEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertFavourite(favourite: ChatFavouriteEntity)
+
+    @Query("DELETE FROM telefam_chat_favourites WHERE owner_user_id = :ownerUserId AND message_id = :messageId")
+    suspend fun deleteFavourite(ownerUserId: String, messageId: String)
+
+    @Query("DELETE FROM telefam_chat_favourites WHERE message_id = :messageId")
+    suspend fun deleteFavouritesForMessage(messageId: String)
+
+    @Query("DELETE FROM telefam_chat_favourites WHERE chat_id = :chatId")
+    suspend fun deleteAllFavouritesForChat(chatId: String)
+
+    // --- Disappearing Settings ---
+    @Query("SELECT * FROM telefam_disappearing_settings WHERE chat_id = :chatId LIMIT 1")
+    fun observeDisappearingSetting(chatId: String): Flow<DisappearingSettingEntity?>
+
+    @Query("SELECT * FROM telefam_disappearing_settings WHERE chat_id = :chatId LIMIT 1")
+    suspend fun getDisappearingSetting(chatId: String): DisappearingSettingEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDisappearingSetting(setting: DisappearingSettingEntity)
+
+    // --- Delivery Receipts ---
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDeliveryReceipt(receipt: DeliveryReceiptEntity)
+
+    @Query("SELECT * FROM telefam_delivery_receipts WHERE chat_id = :chatId")
+    fun observeReceiptsForChat(chatId: String): Flow<List<DeliveryReceiptEntity>>
+
+    @Query("DELETE FROM telefam_delivery_receipts WHERE chat_id = :chatId")
+    suspend fun deleteAllReceiptsForChat(chatId: String)
+
+    // --- Drafts ---
+    @Query("SELECT * FROM telefam_chat_drafts WHERE owner_user_id = :ownerUserId")
+    fun observeAllDraftsForOwner(ownerUserId: String): Flow<List<ChatDraftEntity>>
+
+    @Query("SELECT * FROM telefam_chat_drafts WHERE chat_id = :chatId LIMIT 1")
+    fun observeDraftForChat(chatId: String): Flow<ChatDraftEntity?>
+
+    @Query("SELECT * FROM telefam_chat_drafts WHERE chat_id = :chatId LIMIT 1")
+    suspend fun getDraftForChat(chatId: String): ChatDraftEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertChatDraft(draft: ChatDraftEntity)
+
+    @Query("DELETE FROM telefam_chat_drafts WHERE chat_id = :chatId")
+    suspend fun deleteChatDraft(chatId: String)
+
+    // --- Signal Keys & Double Ratchet Sessions ---
+    @Query("SELECT * FROM telefam_signal_identity_keys WHERE user_id = :userId LIMIT 1")
+    suspend fun getSignalIdentityKey(userId: String): SignalIdentityKeyEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSignalIdentityKey(entity: SignalIdentityKeyEntity)
+
+    @Query("SELECT * FROM telefam_signal_signed_prekeys WHERE user_id = :userId ORDER BY created_at_ms DESC LIMIT 1")
+    suspend fun getLatestSignalSignedPreKey(userId: String): SignalSignedPreKeyEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSignalSignedPreKey(entity: SignalSignedPreKeyEntity)
+
+    @Query("SELECT * FROM telefam_signal_one_time_prekeys WHERE user_id = :userId AND is_consumed = 0 ORDER BY prekey_id ASC")
+    suspend fun getAvailableOneTimePreKeys(userId: String): List<SignalOneTimePreKeyEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSignalOneTimePreKeys(entities: List<SignalOneTimePreKeyEntity>)
+
+    @Query("UPDATE telefam_signal_one_time_prekeys SET is_consumed = 1 WHERE user_id = :userId AND prekey_id = :prekeyId")
+    suspend fun markOneTimePreKeyConsumed(userId: String, prekeyId: Int)
+
+    @Query("SELECT * FROM telefam_signal_ratchet_sessions WHERE owner_user_id = :ownerUserId AND peer_user_id = :peerUserId LIMIT 1")
+    suspend fun getSignalRatchetSession(ownerUserId: String, peerUserId: String): SignalRatchetSessionEntity?
+
+    @Query("SELECT * FROM telefam_signal_ratchet_sessions WHERE owner_user_id = :ownerUserId AND peer_user_id = :peerUserId LIMIT 1")
+    fun observeSignalRatchetSession(ownerUserId: String, peerUserId: String): Flow<SignalRatchetSessionEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSignalRatchetSession(session: SignalRatchetSessionEntity)
+
+    // --- Chat Outbox (WorkManager + WebSocket Reliable Queue) ---
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun enqueueChatOutbox(item: ChatOutboxEntity)
+
+    @Query("SELECT * FROM telefam_chat_outbox WHERE status = 'PENDING' ORDER BY created_at_ms ASC")
+    suspend fun getPendingChatOutboxItems(): List<ChatOutboxEntity>
+
+    @Query("DELETE FROM telefam_chat_outbox WHERE outbox_id = :outboxId")
+    suspend fun deleteChatOutboxItem(outboxId: String)
+
+    @Query("UPDATE telefam_chat_outbox SET status = 'TERMINAL_REJECTED', terminal_error_code = :errorCode WHERE outbox_id = :outboxId")
+    suspend fun markChatOutboxTerminalRejected(outboxId: String, errorCode: String)
+
+    @Query("UPDATE telefam_chat_outbox SET retry_count = retry_count + 1 WHERE outbox_id = :outboxId")
+    suspend fun incrementChatOutboxRetryCount(outboxId: String)
+
+    // --- Klipy Cached Items & Recents (Offline-First) ---
+    @Query("SELECT * FROM telefam_klipy_cached_items WHERE media_tab = :mediaTab AND LOWER(search_query) = LOWER(:query) ORDER BY page_Order ASC")
+    suspend fun getCachedKlipyItems(mediaTab: String, query: String): List<KlipyCachedItemEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCachedKlipyItems(items: List<KlipyCachedItemEntity>)
+
+    @Query("SELECT * FROM telefam_klipy_recents WHERE owner_user_id = :ownerUserId AND media_tab = :mediaTab ORDER BY last_used_at_ms DESC LIMIT 24")
+    fun observeKlipyRecents(ownerUserId: String, mediaTab: String): Flow<List<KlipyRecentItemEntity>>
+
+    @Query("SELECT * FROM telefam_klipy_recents WHERE owner_user_id = :ownerUserId AND media_tab = :mediaTab ORDER BY last_used_at_ms DESC LIMIT 24")
+    suspend fun getKlipyRecents(ownerUserId: String, mediaTab: String): List<KlipyRecentItemEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertKlipyRecent(item: KlipyRecentItemEntity)
 }

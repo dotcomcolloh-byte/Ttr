@@ -26,9 +26,24 @@ import androidx.room.RoomDatabase
         AccountSettingsAndSecurityEntity::class,
         ConnectedAppSessionEntity::class,
         ProblemSupportTicketEntity::class,
-        QuickLoginAccountEntity::class
+        QuickLoginAccountEntity::class,
+        ChatEntity::class,
+        ChatMessageEntity::class,
+        MessageReactionEntity::class,
+        ChatPinEntity::class,
+        ChatFavouriteEntity::class,
+        DisappearingSettingEntity::class,
+        DeliveryReceiptEntity::class,
+        ChatDraftEntity::class,
+        SignalIdentityKeyEntity::class,
+        SignalSignedPreKeyEntity::class,
+        SignalOneTimePreKeyEntity::class,
+        SignalRatchetSessionEntity::class,
+        ChatOutboxEntity::class,
+        KlipyCachedItemEntity::class,
+        KlipyRecentItemEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class TelefamAppDatabase : RoomDatabase() {

@@ -47,6 +47,19 @@ import com.telefam.company.app.domain.PrivacyControlField
 import com.telefam.company.app.domain.PrivacyRuleKey
 import com.telefam.company.app.domain.ReportLocationOption
 import com.telefam.company.app.domain.ReportReasonOption
+import com.telefam.company.app.data.ActiveVoiceBubblePlaybackState
+import com.telefam.company.app.data.ActiveVoiceRecordingState
+import com.telefam.company.app.data.ForwardRecipientTarget
+import com.telefam.company.app.data.TelefamChatRepository
+import com.telefam.company.app.domain.ChatAttachmentItem
+import com.telefam.company.app.domain.ChatDisappearingOption
+import com.telefam.company.app.domain.ChatMessageItem
+import com.telefam.company.app.domain.ChatMessageType
+import com.telefam.company.app.domain.ChatReactionChoice
+import com.telefam.company.app.domain.E2eeVerificationSnapshot
+import com.telefam.company.app.domain.KlipyMediaItem
+import com.telefam.company.app.domain.KlipyMediaTab
+import com.telefam.company.app.domain.OneToOneChatListItem
 import com.telefam.company.app.domain.ReportUrgencyOption
 import com.telefam.company.app.domain.RiskLevel
 import com.telefam.company.app.domain.SafetyTopicGuide
@@ -60,14 +73,21 @@ import com.telefam.company.app.domain.TelefamValidators
 import com.telefam.company.app.domain.UserPostItem
 import com.telefam.company.app.security.AndroidSandboxMediaProcessor
 import com.telefam.company.app.security.TelefamCryptoAndTelemetry
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -79,7 +99,9 @@ enum class AppDestination {
     MAIN_HOME,
     PRIVACY_SETTINGS,
     SETTINGS_AND_PRIVACY,
-    PUBLIC_USER_PROFILE
+    PUBLIC_USER_PROFILE,
+    ONE_TO_ONE_CHAT,
+    E2EE_VERIFICATION
 }
 
 data class TelefamUiState(
@@ -186,9 +208,34 @@ data class TelefamUiState(
     val canRetrySettingsError: Boolean = false,
     val lastSubmittedTicketId: String? = null,
     val profileQrBitmap: Bitmap? = null,
-    val quickLoginAccounts: List<QuickLoginAccountEntity> = emptyList()
+    val quickLoginAccounts: List<QuickLoginAccountEntity> = emptyList(),
+
+    // 1:1 Individual Chats (Offline-First Room Source of Truth + Signal E2EE + Klipy + Voice Notes)
+    val chatListItems: List<OneToOneChatListItem> = emptyList(),
+    val chatListSearchQuery: String = "",
+    val isChatListSearchActive: Boolean = false,
+    val activeChatId: String? = null,
+    val activeChatItem: OneToOneChatListItem? = null,
+    val activeChatMessages: List<ChatMessageItem> = emptyList(),
+    val activeChatAttachments: List<ChatAttachmentItem> = emptyList(),
+    val chatInputText: String = "",
+    val replyingToMessage: ChatMessageItem? = null,
+    val editingMessage: ChatMessageItem? = null,
+    val selectedMessageIds: Set<String> = emptySet(),
+    val isSelectModeActive: Boolean = false,
+    val activeKlipyTab: KlipyMediaTab = KlipyMediaTab.STICKERS,
+    val klipySearchQuery: String = "",
+    val klipyRecentItems: List<KlipyMediaItem> = emptyList(),
+    val previewKlipyItem: KlipyMediaItem? = null,
+    val activeE2eeVerification: E2eeVerificationSnapshot? = null,
+    val forwardCandidates: List<ForwardRecipientTarget> = emptyList(),
+    val forwardSearchQuery: String = "",
+    val selectedForwardUserIds: Set<String> = emptySet(),
+    val messagesPendingForward: List<ChatMessageItem> = emptyList(),
+    val isForwardPickerOpen: Boolean = false
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TelefamViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = TelefamSecurityRepository(application.applicationContext)
@@ -202,15 +249,43 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
         securityRepository = repository,
         socialRepository = socialRepository
     )
+    val chatRepository = TelefamChatRepository(
+        context = application.applicationContext,
+        dao = repository.dao
+    )
 
     private val _uiState = MutableStateFlow(TelefamUiState())
     val uiState: StateFlow<TelefamUiState> = _uiState.asStateFlow()
+
+    val voiceRecordingState: StateFlow<ActiveVoiceRecordingState> = chatRepository.voiceRecordingState
+    val bubblePlaybackState: StateFlow<ActiveVoiceBubblePlaybackState> = chatRepository.bubblePlaybackState
+
+    val klipyPagedFlow: Flow<PagingData<KlipyMediaItem>> = _uiState
+        .map { state ->
+            Triple(
+                state.activeSession?.userId ?: state.savedProfile?.userId ?: "local_telefam_member",
+                state.activeKlipyTab,
+                state.klipySearchQuery
+            )
+        }
+        .distinctUntilChanged()
+        .flatMapLatest { (userId, tab, query) ->
+            chatRepository.klipyProvider.observePagedMedia(
+                ownerUserId = userId,
+                tab = tab,
+                searchQuery = query
+            )
+        }
+        .cachedIn(viewModelScope)
 
     private var currentLocationTriple: Triple<String, Double?, Double?> =
         Triple("Kenya • Africa/Nairobi", -1.2921, 36.8219)
     private var timerJob: Job? = null
     private var usernameCheckJob: Job? = null
     private var ownerReactiveObserverJob: Job? = null
+    private var chatListReactiveObserverJob: Job? = null
+    private var activeChatObserverJob: Job? = null
+    private var klipyRecentsObserverJob: Job? = null
     private var lastRetryableSettingsAction: (() -> Unit)? = null
 
     private val safeExceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -1074,6 +1149,7 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
 
     private fun startOwnerProfileReactiveObserver() {
         val userId = currentAuthenticatedUserId()
+        startOneToOneChatsReactiveObserver(userId)
         ownerReactiveObserverJob?.cancel()
         ownerReactiveObserverJob = viewModelScope.launch(safeExceptionHandler) {
             socialRepository.ensureOwnerMediaAndSubscribersInitialized(userId)
@@ -2903,6 +2979,848 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
                 settingsErrorBanner = null,
                 canRetrySettingsError = false
             )
+        }
+    }
+
+    // =========================================================================
+    // 1:1 INDIVIDUAL CHATS (OFFLINE-FIRST ROOM SOURCE OF TRUTH + SIGNAL E2EE)
+    // =========================================================================
+
+    private fun startOneToOneChatsReactiveObserver(userId: String) {
+        if (userId.isBlank()) return
+        chatRepository.ensureRealtimeConnectionAndPreKeys(userId)
+
+        chatListReactiveObserverJob?.cancel()
+        chatListReactiveObserverJob = viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.observeOneToOneChatList(userId).collectLatest { chats ->
+                _uiState.update { prev ->
+                    val currentActiveId = prev.activeChatId
+                    val refreshedActiveItem = if (currentActiveId != null) {
+                        chats.find { it.chatId == currentActiveId } ?: prev.activeChatItem
+                    } else {
+                        null
+                    }
+                    prev.copy(
+                        chatListItems = chats,
+                        activeChatItem = refreshedActiveItem
+                    )
+                }
+            }
+        }
+
+        observeKlipyRecentsForActiveTab(userId, _uiState.value.activeKlipyTab)
+    }
+
+    private fun observeKlipyRecentsForActiveTab(userId: String, tab: KlipyMediaTab) {
+        klipyRecentsObserverJob?.cancel()
+        klipyRecentsObserverJob = viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.klipyProvider.observeRecents(userId, tab).collectLatest { recents ->
+                _uiState.update { it.copy(klipyRecentItems = recents) }
+            }
+        }
+    }
+
+    fun onToggleChatListSearch(active: Boolean) {
+        _uiState.update {
+            it.copy(
+                isChatListSearchActive = active,
+                chatListSearchQuery = if (!active) "" else it.chatListSearchQuery
+            )
+        }
+    }
+
+    fun onChatListSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(chatListSearchQuery = query) }
+    }
+
+    /**
+     * "Start chat" button on the Main Chats Screen opens the existing CONTACTS screen
+     * so the user can open a profile or tap message to open the 1:1 inbox.
+     */
+    fun onStartChatFromChatsTab() {
+        _uiState.update {
+            it.copy(
+                destination = AppDestination.MAIN_HOME,
+                selectedHomeTab = HomeNavTab.CONTACTS,
+                isOwnerMenuOpen = false
+            )
+        }
+        refreshContactsDirectory(forceDailyRefresh = false)
+    }
+
+    /**
+     * Opens or creates a real 1:1 chat with the active Public User Profile when the user taps "Message".
+     */
+    fun openChatWithActivePublicProfile() {
+        val profile = _uiState.value.activePublicProfile ?: return
+        openOneToOneChatWithDiscoverableUser(profile)
+    }
+
+    /**
+     * Opens or creates a real 1:1 chat with a contact/user from Contacts or Public Profile.
+     */
+    fun openOneToOneChatWithDiscoverableUser(user: DiscoverableUserItem) {
+        viewModelScope.launch(safeExceptionHandler) {
+            val ownerId = currentAuthenticatedUserId()
+            val chatId = chatRepository.openOrCreateOneToOneChat(
+                ownerUserId = ownerId,
+                peerUserId = user.userId,
+                peerFullName = user.fullName,
+                peerUsername = user.username,
+                peerAvatarUrl = user.avatarCdnUrl,
+                peerBio = user.bio,
+                peerIsOnline = true,
+                peerLastSeenMs = System.currentTimeMillis(),
+                peerIsDeleted = false
+            )
+            openOneToOneChatById(chatId)
+        }
+    }
+
+    /**
+     * Opens an existing 1:1 chat from the Main Chats list by `chatId`.
+     * Clears unread count, loads draft from Room, and observes messages/attachments from Room.
+     */
+    fun openOneToOneChatById(chatId: String) {
+        viewModelScope.launch(safeExceptionHandler) {
+            val ownerId = currentAuthenticatedUserId()
+            val draftEntity = repository.dao.getDraftForChat(chatId)
+            val chatEntity = repository.dao.getChatById(chatId)
+            if (chatEntity != null) {
+                chatRepository.markChatMessagesSeen(ownerId, chatId, chatEntity.peerUserId)
+            }
+
+            _uiState.update { prev ->
+                val item = prev.chatListItems.find { it.chatId == chatId } ?: chatEntity?.let { ce ->
+                    OneToOneChatListItem(
+                        chatId = ce.chatId,
+                        ownerUserId = ce.ownerUserId,
+                        peerUserId = ce.peerUserId,
+                        peerFullName = if (ce.peerIsDeleted) "User not found" else ce.peerFullName,
+                        peerUsername = ce.peerUsername,
+                        peerAvatarUrl = if (ce.peerIsDeleted) null else ce.peerAvatarUrl,
+                        peerBio = ce.peerBio,
+                        peerIsOnline = ce.peerIsOnline,
+                        peerLastSeenMs = ce.peerLastSeenMs,
+                        peerIsTyping = ce.peerIsTyping,
+                        peerIsDeleted = ce.peerIsDeleted,
+                        isBlockedByMe = false,
+                        isBlockedByPeer = false,
+                        lastMessageId = ce.lastMessageId,
+                        lastMessageType = runCatching { ChatMessageType.valueOf(ce.lastMessageType) }.getOrDefault(ChatMessageType.TEXT),
+                        lastMessagePreview = ce.lastMessagePreview,
+                        lastMessageSenderId = ce.lastMessageSenderId,
+                        lastMessageDeliveryStatus = com.telefam.company.app.domain.ChatMessageDeliveryStatus.SENT,
+                        lastMessageMediaIconUrl = ce.lastMessageMediaIconUrl,
+                        lastMessageTimestampMs = ce.lastMessageTimestampMs,
+                        unreadCount = 0,
+                        disappearingOption = ChatDisappearingOption.fromSeconds(ce.disappearingDurationSeconds),
+                        e2eeSafetyNumberVerified = ce.e2eeSafetyNumberVerified,
+                        draftText = draftEntity?.draftText.orEmpty()
+                    )
+                }
+                prev.copy(
+                    destination = AppDestination.ONE_TO_ONE_CHAT,
+                    activeChatId = chatId,
+                    activeChatItem = item,
+                    chatInputText = draftEntity?.draftText.orEmpty(),
+                    replyingToMessage = null,
+                    editingMessage = null,
+                    selectedMessageIds = emptySet(),
+                    isSelectModeActive = false,
+                    previewKlipyItem = null
+                )
+            }
+
+            activeChatObserverJob?.cancel()
+            activeChatObserverJob = viewModelScope.launch(safeExceptionHandler) {
+                chatRepository.observeMessagesForChat(ownerId, chatId).collectLatest { messages ->
+                    val attachments = chatRepository.extractAttachmentsFromMessages(messages)
+                    val draftReplyId = repository.dao.getDraftForChat(chatId)?.replyToMessageId
+                    _uiState.update { prev ->
+                        val resolvedReply = prev.replyingToMessage
+                            ?: draftReplyId?.let { rId -> messages.find { it.messageId == rId } }
+                        prev.copy(
+                            activeChatMessages = messages,
+                            activeChatAttachments = attachments,
+                            replyingToMessage = resolvedReply
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun closeActiveOneToOneChat() {
+        chatRepository.stopBubbleVoicePlayback()
+        chatRepository.stopVoicePreviewPlayback()
+        activeChatObserverJob?.cancel()
+        _uiState.update {
+            it.copy(
+                destination = AppDestination.MAIN_HOME,
+                selectedHomeTab = HomeNavTab.CHATS,
+                activeChatId = null,
+                activeChatItem = null,
+                activeChatMessages = emptyList(),
+                activeChatAttachments = emptyList(),
+                replyingToMessage = null,
+                editingMessage = null,
+                selectedMessageIds = emptySet(),
+                isSelectModeActive = false,
+                previewKlipyItem = null
+            )
+        }
+    }
+
+    fun onChatInputTextChanged(newText: String) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        _uiState.update { it.copy(chatInputText = newText) }
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.updateDraftAndTyping(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                draftText = newText,
+                replyToMessageId = _uiState.value.replyingToMessage?.messageId
+            )
+        }
+    }
+
+    fun onSwipeOrSelectReplyMessage(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        _uiState.update {
+            it.copy(
+                replyingToMessage = message,
+                editingMessage = null
+            )
+        }
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.updateDraftAndTyping(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                draftText = _uiState.value.chatInputText,
+                replyToMessageId = message.messageId
+            )
+        }
+    }
+
+    fun onStartEditingMessage(message: ChatMessageItem) {
+        val ownerId = currentAuthenticatedUserId()
+        if (message.senderUserId != ownerId || message.messageType != ChatMessageType.TEXT) return
+        _uiState.update {
+            it.copy(
+                editingMessage = message,
+                replyingToMessage = null,
+                chatInputText = message.decryptedText
+            )
+        }
+    }
+
+    fun onCancelReplyOrEditBanner() {
+        val state = _uiState.value
+        val wasEditing = state.editingMessage != null
+        val chatId = state.activeChatId
+        val peerId = state.activeChatItem?.peerUserId
+        val ownerId = currentAuthenticatedUserId()
+        _uiState.update {
+            it.copy(
+                replyingToMessage = null,
+                editingMessage = null,
+                chatInputText = if (wasEditing) "" else it.chatInputText
+            )
+        }
+        if (chatId != null && peerId != null) {
+            viewModelScope.launch(safeExceptionHandler) {
+                chatRepository.updateDraftAndTyping(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = peerId,
+                    draftText = _uiState.value.chatInputText,
+                    replyToMessageId = null
+                )
+            }
+        }
+    }
+
+    fun sendCurrentTextOrSaveEdit() {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val text = state.chatInputText.trim()
+        if (text.isEmpty()) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val editingTarget = state.editingMessage
+        val replyTarget = state.replyingToMessage
+
+        _uiState.update {
+            it.copy(
+                chatInputText = "",
+                replyingToMessage = null,
+                editingMessage = null
+            )
+        }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            if (editingTarget != null) {
+                chatRepository.editMessage(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = activeChat.peerUserId,
+                    messageId = editingTarget.messageId,
+                    newText = text
+                )
+            } else {
+                chatRepository.sendMessage(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = activeChat.peerUserId,
+                    messageType = ChatMessageType.TEXT,
+                    text = text,
+                    replyToMessage = replyTarget,
+                    peerDisplayNameForReply = activeChat.peerFullName
+                )
+            }
+        }
+    }
+
+    // --- Klipy Stickers | GIFs | Clips Sheet & Preview Dialog ---
+
+    fun onSelectKlipyTab(tab: KlipyMediaTab) {
+        if (_uiState.value.activeKlipyTab == tab) return
+        val ownerId = currentAuthenticatedUserId()
+        _uiState.update { it.copy(activeKlipyTab = tab) }
+        observeKlipyRecentsForActiveTab(ownerId, tab)
+    }
+
+    fun onKlipySearchQueryChanged(query: String) {
+        _uiState.update { it.copy(klipySearchQuery = query) }
+    }
+
+    fun onOpenKlipyItemPreview(item: KlipyMediaItem?) {
+        _uiState.update { it.copy(previewKlipyItem = item) }
+    }
+
+    fun confirmSendKlipyMediaItem(item: KlipyMediaItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val msgType = when (item.mediaTab) {
+            KlipyMediaTab.STICKERS -> ChatMessageType.STICKER
+            KlipyMediaTab.GIFS -> ChatMessageType.GIF
+            KlipyMediaTab.CLIPS -> ChatMessageType.CLIP
+        }
+
+        _uiState.update {
+            it.copy(
+                previewKlipyItem = null,
+                replyingToMessage = null
+            )
+        }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = msgType,
+                text = item.title,
+                klipyItem = item,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName
+            )
+        }
+    }
+
+    // --- Voice Note Recording, Preview Player, View-Once Toggle & Send ---
+
+    fun startVoiceNoteHoldRecording() {
+        val activeChat = _uiState.value.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+        chatRepository.startVoiceNoteRecording()
+    }
+
+    fun stopVoiceNoteHoldRecording() {
+        chatRepository.stopVoiceNoteRecording()
+    }
+
+    fun discardRecordedVoiceNote() {
+        chatRepository.discardRecordedVoiceNote()
+    }
+
+    fun toggleRecordedVoiceNoteViewOnce() {
+        chatRepository.toggleVoiceNoteViewOnce()
+    }
+
+    fun toggleRecordedVoicePreviewPlay() {
+        chatRepository.toggleVoicePreviewPlayback()
+    }
+
+    fun sendRecordedVoiceNote() {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val recState = voiceRecordingState.value
+        val filePath = recState.recordedFilePath ?: return
+        val durationMs = recState.recordedDurationMs.coerceAtLeast(1000L)
+        val waveform = recState.recordedWaveformSamples
+        val isViewOnce = recState.isViewOnceEnabled
+        val replyTarget = state.replyingToMessage
+        val ownerId = currentAuthenticatedUserId()
+
+        chatRepository.stopVoicePreviewPlayback()
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.VOICE_NOTE,
+                text = "",
+                voiceFilePath = filePath,
+                voiceDurationMs = durationMs,
+                voiceWaveformSamples = waveform,
+                isViewOnce = isViewOnce,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName
+            )
+            // Clear recording preview state without deleting the sent file
+            chatRepository.stopVoicePreviewPlayback()
+            // Reset state in repository
+            resetVoicePreviewAfterSend()
+        }
+    }
+
+    private fun resetVoicePreviewAfterSend() {
+        chatRepository.discardStateOnlyAfterSend()
+    }
+
+    fun toggleBubbleVoiceNotePlayback(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        chatRepository.toggleBubbleVoiceNotePlayback(
+            ownerUserId = ownerId,
+            chatId = chatId,
+            peerUserId = peerId,
+            message = message
+        )
+    }
+
+    // --- Long Press Message Actions, Reactions, Pin, Favourite, Unsend, Select Mode & Forward ---
+
+    fun reactToMessage(message: ChatMessageItem, choice: ChatReactionChoice) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.toggleMessageReaction(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = message.messageId,
+                reactionChoice = choice
+            )
+        }
+    }
+
+    fun togglePinMessage(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.togglePinMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = message.messageId
+            )
+        }
+    }
+
+    fun toggleFavouriteMessage(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.toggleFavouriteMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = message.messageId
+            )
+        }
+    }
+
+    fun unsendMessageForBothDevices(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        if (message.senderUserId != ownerId) return
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.unsendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = message.messageId
+            )
+        }
+    }
+
+    fun deleteSingleMessage(message: ChatMessageItem) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.deleteMessages(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageIds = listOf(message.messageId)
+            )
+        }
+    }
+
+    fun enterMessageSelectMode(initialMessageId: String) {
+        _uiState.update {
+            it.copy(
+                isSelectModeActive = true,
+                selectedMessageIds = setOf(initialMessageId)
+            )
+        }
+    }
+
+    fun toggleSelectedMessageId(messageId: String) {
+        _uiState.update { state ->
+            val next = if (messageId in state.selectedMessageIds) {
+                state.selectedMessageIds - messageId
+            } else {
+                state.selectedMessageIds + messageId
+            }
+            state.copy(
+                selectedMessageIds = next,
+                isSelectModeActive = next.isNotEmpty()
+            )
+        }
+    }
+
+    fun toggleMarkAllMessagesInSelectMode() {
+        _uiState.update { state ->
+            val allIds = state.activeChatMessages.map { it.messageId }.toSet()
+            val next = if (state.selectedMessageIds.size == allIds.size && allIds.isNotEmpty()) {
+                emptySet()
+            } else {
+                allIds
+            }
+            state.copy(
+                selectedMessageIds = next,
+                isSelectModeActive = true
+            )
+        }
+    }
+
+    fun exitMessageSelectMode() {
+        _uiState.update {
+            it.copy(
+                isSelectModeActive = false,
+                selectedMessageIds = emptySet()
+            )
+        }
+    }
+
+    fun deleteSelectedMessagesInSelectMode() {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val selectedIds = state.selectedMessageIds.toList()
+        if (selectedIds.isEmpty()) return
+        val ownerId = currentAuthenticatedUserId()
+
+        _uiState.update {
+            it.copy(
+                isSelectModeActive = false,
+                selectedMessageIds = emptySet()
+            )
+        }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.deleteMessages(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageIds = selectedIds
+            )
+        }
+    }
+
+    /**
+     * Checks whether Copy or Forward is permitted by the owner's PrivacySettingsEntity in Room.
+     * - Copy follows `whoCanCopyMessages` (`NOBODY` disallows copy).
+     * - Forward follows `whoCanShareChats` (`NOBODY` disallows forwarding, hiding Forward everywhere).
+     */
+    fun isCopyMessageAllowedByPrivacy(): Boolean {
+        val raw = _uiState.value.privacySettings.whoCanCopyMessages
+        return PrivacyAudience.fromStorageValue(raw) != PrivacyAudience.NOBODY
+    }
+
+    fun isForwardMessageAllowedByPrivacy(): Boolean {
+        val raw = _uiState.value.privacySettings.whoCanShareChats
+        return PrivacyAudience.fromStorageValue(raw) != PrivacyAudience.NOBODY
+    }
+
+    fun openForwardContactsPicker(messages: List<ChatMessageItem>) {
+        if (!isForwardMessageAllowedByPrivacy()) return
+        val validMessages = messages.filter { !it.isViewOnce && !it.isViewOnceConsumed }
+        if (validMessages.isEmpty()) return
+
+        viewModelScope.launch(safeExceptionHandler) {
+            val ownerId = currentAuthenticatedUserId()
+            val allProfiles = repository.dao.getAllDiscoverableProfilesExcept(ownerId)
+            val existingChats = _uiState.value.chatListItems
+            val deletedPeerIds = existingChats.filter { it.peerIsDeleted }.map { it.peerUserId }.toSet()
+
+            val candidates = mutableListOf<ForwardRecipientTarget>()
+            val seenIds = mutableSetOf<String>()
+
+            // Include existing 1:1 chat peers first, then Contacts from Room, skipping blocked or deleted users
+            for (chat in existingChats) {
+                if (chat.peerIsDeleted || chat.isBlockedEitherWay) continue
+                if (seenIds.add(chat.peerUserId)) {
+                    candidates.add(
+                        ForwardRecipientTarget(
+                            userId = chat.peerUserId,
+                            fullName = chat.peerFullName,
+                            username = chat.peerUsername,
+                            avatarUrl = chat.peerAvatarUrl,
+                            bio = chat.peerBio,
+                            isOnline = chat.peerIsOnline,
+                            isDeleted = false,
+                            isBlocked = false
+                        )
+                    )
+                }
+            }
+
+            for (profile in allProfiles) {
+                if (profile.userId in deletedPeerIds) continue
+                val isBlocked = repository.dao.isEitherBlocked(ownerId, profile.userId) > 0
+                if (isBlocked) continue
+                if (seenIds.add(profile.userId)) {
+                    candidates.add(
+                        ForwardRecipientTarget(
+                            userId = profile.userId,
+                            fullName = profile.fullName,
+                            username = profile.username,
+                            avatarUrl = profile.avatarCdnUrl,
+                            bio = profile.bio,
+                            isOnline = true,
+                            isDeleted = false,
+                            isBlocked = false
+                        )
+                    )
+                }
+            }
+
+            _uiState.update {
+                it.copy(
+                    isForwardPickerOpen = true,
+                    messagesPendingForward = validMessages,
+                    forwardCandidates = candidates,
+                    forwardSearchQuery = "",
+                    selectedForwardUserIds = emptySet()
+                )
+            }
+        }
+    }
+
+    fun onForwardSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(forwardSearchQuery = query) }
+    }
+
+    fun toggleForwardRecipientSelection(userId: String) {
+        _uiState.update { state ->
+            val next = if (userId in state.selectedForwardUserIds) {
+                state.selectedForwardUserIds - userId
+            } else {
+                state.selectedForwardUserIds + userId
+            }
+            state.copy(selectedForwardUserIds = next)
+        }
+    }
+
+    fun dismissForwardContactsPicker() {
+        _uiState.update {
+            it.copy(
+                isForwardPickerOpen = false,
+                messagesPendingForward = emptyList(),
+                selectedForwardUserIds = emptySet(),
+                forwardSearchQuery = ""
+            )
+        }
+    }
+
+    fun confirmForwardSelectedMessages() {
+        val state = _uiState.value
+        val messages = state.messagesPendingForward
+        val selectedTargets = state.forwardCandidates.filter { it.userId in state.selectedForwardUserIds }
+        if (messages.isEmpty() || selectedTargets.isEmpty()) return
+        val ownerId = currentAuthenticatedUserId()
+
+        _uiState.update {
+            it.copy(
+                isForwardPickerOpen = false,
+                messagesPendingForward = emptyList(),
+                selectedForwardUserIds = emptySet(),
+                forwardSearchQuery = "",
+                isSelectModeActive = false,
+                selectedMessageIds = emptySet()
+            )
+        }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.forwardMessagesToRecipients(
+                ownerUserId = ownerId,
+                messagesToForward = messages,
+                recipients = selectedTargets
+            )
+        }
+    }
+
+    // --- 3-Dots Chat Menu Actions (Disappearing, Clear Chat, Block, Report, E2EE Verification) ---
+
+    fun setActiveChatDisappearingOption(option: ChatDisappearingOption) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.setDisappearingMessagesTimer(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                option = option
+            )
+        }
+    }
+
+    fun clearActiveChatHistory() {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.clearChatHistory(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId
+            )
+        }
+    }
+
+    fun toggleBlockActiveChatUser() {
+        val activeChat = _uiState.value.activeChatItem ?: return
+        val shouldBlock = !activeChat.isBlockedByMe
+        viewModelScope.launch(safeExceptionHandler) {
+            val ownerId = currentAuthenticatedUserId()
+            val telemetry = currentTelemetry()
+            socialRepository.setBlockUserState(
+                currentUserId = ownerId,
+                targetUserId = activeChat.peerUserId,
+                block = shouldBlock,
+                telemetry = telemetry
+            )
+        }
+    }
+
+    fun submitReportForActiveChatUser(
+        reason: ReportReasonOption,
+        location: ReportLocationOption,
+        urgency: ReportUrgencyOption,
+        blockAfterReport: Boolean = true,
+        additionalNotes: String = ""
+    ) {
+        val activeChat = _uiState.value.activeChatItem ?: return
+        viewModelScope.launch(safeExceptionHandler) {
+            val ownerId = currentAuthenticatedUserId()
+            val telemetry = currentTelemetry()
+            socialRepository.submitProfileReport(
+                currentUserId = ownerId,
+                reportedUserId = activeChat.peerUserId,
+                reason = reason,
+                location = location,
+                urgency = urgency,
+                additionalNotes = additionalNotes,
+                telemetry = telemetry
+            )
+            if (blockAfterReport && !activeChat.isBlockedByMe) {
+                socialRepository.setBlockUserState(
+                    currentUserId = ownerId,
+                    targetUserId = activeChat.peerUserId,
+                    block = true,
+                    telemetry = telemetry
+                )
+            }
+        }
+    }
+
+    fun openActiveChatE2eeVerificationScreen() {
+        val chatId = _uiState.value.activeChatId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            val snapshot = chatRepository.getE2eeVerificationSnapshot(ownerId, chatId)
+            if (snapshot != null) {
+                _uiState.update {
+                    it.copy(
+                        activeE2eeVerification = snapshot,
+                        destination = AppDestination.E2EE_VERIFICATION
+                    )
+                }
+            }
+        }
+    }
+
+    fun setActiveChatE2eeVerified(verified: Boolean) {
+        val chatId = _uiState.value.activeChatId ?: _uiState.value.activeE2eeVerification?.chatId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.setE2eeSafetyNumberVerified(chatId, verified)
+            val refreshed = chatRepository.getE2eeVerificationSnapshot(ownerId, chatId)
+            _uiState.update {
+                it.copy(activeE2eeVerification = refreshed)
+            }
+        }
+    }
+
+    fun toggleActiveChatE2eeVerified() {
+        val snap = _uiState.value.activeE2eeVerification ?: return
+        setActiveChatE2eeVerified(!snap.isVerified)
+    }
+
+    fun closeE2eeVerificationScreen() {
+        _uiState.update {
+            it.copy(destination = AppDestination.ONE_TO_ONE_CHAT)
         }
     }
 }

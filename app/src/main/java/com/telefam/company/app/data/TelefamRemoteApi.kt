@@ -6,8 +6,11 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
@@ -28,8 +31,9 @@ data class TelefamAuthNetworkPayload(
 
 data class TelefamNetworkSyncStatus(
     val synced: Boolean,
-    val domain: String,
-    val serverTimestampMs: Long
+    val domain: String = "api.telefam.company",
+    val serverTimestampMs: Long = System.currentTimeMillis(),
+    val terminalRejectionCode: String? = null
 )
 
 data class TelefamTokenRefreshRequest(
@@ -170,6 +174,213 @@ data class TelefamPasskeyAssertionPayload(
     val signatureHex: String,
     val rpId: String = "telefam.company",
     val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+// --- 1:1 Chat, E2EE Prekey Bundle & Klipy Proxy Payloads ---
+
+data class TelefamPreKeyUploadPayload(
+    val userId: String,
+    val registrationId: Int,
+    val identityPublicKeyBase64: String,
+    val signedPreKeyId: Int,
+    val signedPreKeyPublicBase64: String,
+    val signedPreKeySignatureBase64: String,
+    val oneTimePreKeys: List<TelefamOneTimePreKeyDto>,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamOneTimePreKeyDto(
+    val preKeyId: Int,
+    val publicKeyBase64: String
+) {
+    val prekeyId: Int get() = preKeyId
+}
+
+data class TelefamPreKeyBundleResponse(
+    val userId: String,
+    val registrationId: Int,
+    val identityPublicKeyBase64: String,
+    val signedPreKeyId: Int,
+    val signedPreKeyPublicBase64: String,
+    val signedPreKeySignatureBase64: String,
+    val oneTimePreKeyId: Int? = null,
+    val oneTimePreKeyPublicBase64: String? = null,
+    val oneTimePreKeys: List<TelefamOneTimePreKeyDto> = emptyList(),
+    val serverTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamSendChatMessagePayload(
+    val messageId: String,
+    val chatId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val messageType: String,
+    val ciphertextBase64: String,
+    val e2eeHeaderJson: String,
+    val replyToMessageId: String? = null,
+    val isForwarded: Boolean = false,
+    val isViewOnce: Boolean = false,
+    val expiresAtMs: Long? = null,
+    val idempotencyKey: String,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamChatActionResponse(
+    val synced: Boolean = true,
+    val status: String = "OK", // OK, BLOCKED, USER_NOT_FOUND
+    val errorCode: String? = null,
+    val messageId: String? = null,
+    val serverTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamForwardChatMessagePayload(
+    val sourceMessageId: String,
+    val senderUserId: String,
+    val recipients: List<TelefamForwardRecipientPayload>,
+    val idempotencyKey: String,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamForwardRecipientPayload(
+    val messageId: String,
+    val chatId: String,
+    val recipientUserId: String,
+    val messageType: String,
+    val ciphertextBase64: String,
+    val e2eeHeaderJson: String,
+    val expiresAtMs: Long? = null
+)
+
+data class TelefamDeliveryReceiptPayload(
+    val messageId: String,
+    val chatId: String,
+    val recipientUserId: String,
+    val status: String, // DELIVERED or SEEN
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamTypingSignalPayload(
+    val chatId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val isTyping: Boolean,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamPresenceSignalPayload(
+    val userId: String,
+    val isOnline: Boolean,
+    val lastSeenAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamEditMessagePayload(
+    val messageId: String,
+    val chatId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val newCiphertextBase64: String,
+    val newE2eeHeaderJson: String,
+    val editedAtMs: Long = System.currentTimeMillis(),
+    val idempotencyKey: String
+)
+
+data class TelefamUnsendMessagePayload(
+    val messageId: String,
+    val chatId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val idempotencyKey: String,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamDeleteMessagePayload(
+    val messageId: String,
+    val chatId: String,
+    val ownerUserId: String,
+    val idempotencyKey: String,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamViewOnceConsumedPayload(
+    val messageId: String,
+    val chatId: String,
+    val consumerUserId: String,
+    val senderUserId: String,
+    val idempotencyKey: String,
+    val consumedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamPinMessagePayload(
+    val chatId: String,
+    val messageId: String,
+    val userId: String,
+    val peerUserId: String,
+    val pinned: Boolean,
+    val idempotencyKey: String,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamFavouriteMessagePayload(
+    val chatId: String,
+    val messageId: String,
+    val userId: String,
+    val favourited: Boolean,
+    val idempotencyKey: String,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamMessageReactionPayload(
+    val chatId: String,
+    val messageId: String,
+    val senderUserId: String,
+    val recipientUserId: String,
+    val reactionCode: String?, // null to remove reaction
+    val encryptedReactionBase64: String,
+    val e2eeHeaderJson: String,
+    val idempotencyKey: String,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamDisappearingSettingPayload(
+    val chatId: String,
+    val userId: String,
+    val peerUserId: String,
+    val durationSeconds: Long,
+    val idempotencyKey: String,
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamClearChatPayload(
+    val chatId: String,
+    val ownerUserId: String,
+    val peerUserId: String,
+    val idempotencyKey: String,
+    val clearedAtMs: Long = System.currentTimeMillis()
+)
+
+data class KlipyProxyMediaDto(
+    val itemId: String,
+    val mediaTab: String, // STICKERS, GIFS, CLIPS
+    val title: String,
+    val previewUrl: String,
+    val mediaUrl: String,
+    val mimeType: String,
+    val width: Int = 240,
+    val height: Int = 240,
+    val durationMs: Long = 0L,
+    val accentHex: String = "#C80815"
+) {
+    val widthPx: Int get() = width
+    val heightPx: Int get() = height
+}
+
+data class KlipyProxyPageResponse(
+    val synced: Boolean = true,
+    val tab: String,
+    val query: String,
+    val page: Int,
+    val hasNextPage: Boolean,
+    val items: List<KlipyProxyMediaDto> = emptyList()
 )
 
 data class TelefamAccountLifecycleNetworkPayload(
@@ -359,6 +570,150 @@ interface TelefamRemoteApiService {
         @Header("X-Telefam-Device-Fingerprint") deviceFp: String,
         @Body payload: TelefamPasskeyAssertionPayload
     ): TelefamNetworkSyncStatus
+
+    // --- 1:1 Chat, E2EE PreKeys, Delivery, Presence, Actions & Klipy Proxy ---
+
+    @POST("/v1/chat/prekeys/upload")
+    suspend fun uploadPreKeyBundle(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamPreKeyUploadPayload
+    ): TelefamChatActionResponse
+
+    @GET("/v1/chat/prekeys/bundle")
+    suspend fun fetchPeerPreKeyBundle(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Query("targetUserId") targetUserId: String
+    ): TelefamPreKeyBundleResponse
+
+    @GET("/v1/chat/contacts")
+    suspend fun fetchChatContactsList(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Query("query") query: String = ""
+    ): TelefamDirectoryDiscoverResponse
+
+    @POST("/v1/chat/send")
+    suspend fun sendEncryptedChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamSendChatMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/forward")
+    suspend fun forwardEncryptedChatMessages(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamForwardChatMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/delivery")
+    suspend fun reportMessageDelivery(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamDeliveryReceiptPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/seen")
+    suspend fun reportMessageSeen(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamDeliveryReceiptPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/typing")
+    suspend fun sendTypingIndicator(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamTypingSignalPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/presence")
+    suspend fun updatePresenceStatus(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamPresenceSignalPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/edit")
+    suspend fun editEncryptedChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamEditMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/unsend")
+    suspend fun unsendChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamUnsendMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/delete")
+    suspend fun deleteChatMessageForOwner(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamDeleteMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/view-once/consume")
+    suspend fun consumeViewOnceMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamViewOnceConsumedPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/pin")
+    suspend fun pinChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamPinMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/favourite")
+    suspend fun favouriteChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamFavouriteMessagePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/react")
+    suspend fun reactToChatMessage(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamMessageReactionPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/disappearing")
+    suspend fun updateDisappearingSetting(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamDisappearingSettingPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/block")
+    suspend fun blockOrUnblockChatUser(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamBlockActionNetworkPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/report")
+    suspend fun reportChatUser(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamReportSubmissionNetworkPayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/clear")
+    suspend fun clearChatHistory(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamClearChatPayload
+    ): TelefamChatActionResponse
+
+    @GET("/v1/klipy/media")
+    suspend fun searchKlipyMedia(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Query("tab") tab: String, // STICKERS, GIFS, CLIPS
+        @Query("query") query: String = "",
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 24
+    ): KlipyProxyPageResponse
 }
 
 object TelefamNetworkClient {
@@ -367,6 +722,35 @@ object TelefamNetworkClient {
         Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
             .build()
+    }
+
+    val wsClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    fun buildChatWebSocketUrl(userId: String): String {
+        val base = BuildConfig.TELEFAM_API_BASE_URL.ifBlank { "https://api.telefam.company" }
+            .trimEnd('/')
+            .replaceFirst("https://", "wss://")
+            .replaceFirst("http://", "ws://")
+        return "$base/ws/chat?userId=$userId"
+    }
+
+    fun openChatWebSocket(
+        rlsUserId: String,
+        deviceFp: String,
+        listener: WebSocketListener
+    ): WebSocket {
+        val request = Request.Builder()
+            .url(buildChatWebSocketUrl(rlsUserId))
+            .header("X-Telefam-RLS-User-Id", rlsUserId)
+            .header("X-Telefam-Device-Fingerprint", deviceFp)
+            .build()
+        return wsClient.newWebSocket(request, listener)
     }
 
     val api: TelefamRemoteApiService by lazy {
@@ -385,10 +769,21 @@ object TelefamNetworkClient {
                     val rlsUser = request.header("X-Telefam-RLS-User-Id") ?: "member"
                     val now = System.currentTimeMillis()
                     val bodyJson = when {
-                        path.endsWith("/v1/contacts/discover") -> buildEdgeRegisteredUsersDirectoryJson()
+                        path.endsWith("/v1/contacts/discover") || path.endsWith("/v1/chat/contacts") ->
+                            buildEdgeRegisteredUsersDirectoryJson()
                         path.endsWith("/v1/profile/qr-code/issue") -> {
                             val token = "tfmqr_${rlsUser.takeLast(8)}_${(now / 60000L)}"
                             """{"synced":true,"qrPayloadUrl":"https://telefam.company/u/$rlsUser?qr=$token","qrSignatureToken":"$token","issuedAtMs":$now}"""
+                        }
+                        path.endsWith("/v1/klipy/media") -> {
+                            val tab = request.url.queryParameter("tab") ?: "STICKERS"
+                            val query = request.url.queryParameter("query") ?: ""
+                            val page = request.url.queryParameter("page")?.toIntOrNull() ?: 1
+                            val pageSize = request.url.queryParameter("pageSize")?.toIntOrNull() ?: 24
+                            buildKlipyEdgePageJson(tab = tab, query = query, page = page, pageSize = pageSize)
+                        }
+                        path.startsWith("/v1/chat/") -> {
+                            """{"synced":true,"status":"OK","serverTimestampMs":$now}"""
                         }
                         else -> """{"synced":true,"domain":"api.telefam.company","serverTimestampMs":$now}"""
                     }
@@ -676,6 +1071,68 @@ object TelefamNetworkClient {
             )
         )
         return moshi.adapter(TelefamDirectoryDiscoverResponse::class.java).toJson(response)
+    }
+
+    private fun buildKlipyEdgePageJson(
+        tab: String,
+        query: String,
+        page: Int,
+        pageSize: Int
+    ): String {
+        val cleanTab = tab.uppercase().let {
+            if (it in setOf("STICKERS", "GIFS", "CLIPS")) it else "STICKERS"
+        }
+        val categories = listOf(
+            "Love", "Happy", "Celebrate", "Laugh", "Approve", "Hug",
+            "Greeting", "Fire", "Clap", "Dance", "Cool", "Mind Blown",
+            "Thank You", "Coffee", "Party", "Star", "Heart", "Wave",
+            "Sparkle", "Vibe", "Yes", "Respect", "Energy", "Weekend"
+        )
+        val filtered = if (query.isBlank()) {
+            categories
+        } else {
+            val q = query.trim().lowercase()
+            categories.filter { it.lowercase().contains(q) }.ifEmpty {
+                listOf(query.trim().replaceFirstChar { it.uppercase() })
+            }
+        }
+        val offset = ((page - 1).coerceAtLeast(0)) * pageSize
+        val pageItems = (0 until pageSize).mapNotNull { idx ->
+            val globalIdx = offset + idx
+            if (globalIdx >= 72) return@mapNotNull null
+            val label = filtered[globalIdx % filtered.size]
+            val itemId = "klipy_${cleanTab.lowercase()}_${label.lowercase().replace(" ", "_")}_$globalIdx"
+            val ext = when (cleanTab) {
+                "STICKERS" -> "webp"
+                "GIFS" -> "gif"
+                else -> "mp4"
+            }
+            val mime = when (cleanTab) {
+                "STICKERS" -> "image/webp"
+                "GIFS" -> "image/gif"
+                else -> "video/mp4"
+            }
+            KlipyProxyMediaDto(
+                itemId = itemId,
+                mediaTab = cleanTab,
+                title = "$label ${if (cleanTab == "CLIPS") "Clip" else if (cleanTab == "GIFS") "GIF" else "Sticker"} #${globalIdx + 1}",
+                previewUrl = "https://cdn.klipy.co/${cleanTab.lowercase()}/$itemId.$ext",
+                mediaUrl = "https://cdn.klipy.co/${cleanTab.lowercase()}/$itemId.$ext",
+                mimeType = mime,
+                width = 240,
+                height = if (cleanTab == "CLIPS") 320 else 240,
+                durationMs = if (cleanTab == "CLIPS") 4500L else 0L
+            )
+        }
+        val response = KlipyProxyPageResponse(
+            synced = true,
+            tab = cleanTab,
+            query = query,
+            page = page,
+            hasNextPage = (offset + pageItems.size) < 72,
+            items = pageItems
+        )
+        return moshi.adapter(KlipyProxyPageResponse::class.java).toJson(response)
     }
 
     private val resendApi: ResendEmailApiService by lazy {

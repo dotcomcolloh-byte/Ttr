@@ -14,10 +14,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.resolveTelefamDarkTheme
 import com.telefam.company.app.ui.screens.AuthScreen
+import com.telefam.company.app.ui.screens.E2eeVerificationScreen
 import com.telefam.company.app.ui.screens.MainHomeScreen
+import com.telefam.company.app.ui.screens.OneToOneChatScreen
 import com.telefam.company.app.ui.screens.PrivacySettingsScreen
 import com.telefam.company.app.ui.screens.ProfileSetupScreen
 import com.telefam.company.app.ui.screens.PublicUserProfileScreen
@@ -29,6 +32,9 @@ fun TelefamRootApp(
     viewModel: TelefamViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val voiceRecordingState by viewModel.voiceRecordingState.collectAsStateWithLifecycle()
+    val bubblePlaybackState by viewModel.bubblePlaybackState.collectAsStateWithLifecycle()
+    val klipyPagingItems = viewModel.klipyPagedFlow.collectAsLazyPagingItems()
     val context = LocalContext.current
     val resolvedDarkTheme = resolveTelefamDarkTheme(uiState.accountSettings.appThemeMode)
 
@@ -135,7 +141,9 @@ fun TelefamRootApp(
                             onOwnerClearStatusBanner = viewModel::clearOwnerStatusBanner,
                             onOpenSettingsAndPrivacy = { viewModel.openSettingsAndPrivacy() },
                             onOpenOwnerMenu = viewModel::openOwnerMenu,
-                            onCloseOwnerMenu = viewModel::closeOwnerMenu
+                            onCloseOwnerMenu = viewModel::closeOwnerMenu,
+                            onOpenOneToOneChat = viewModel::openOneToOneChatById,
+                            onChatSearchQueryChanged = viewModel::onChatListSearchQueryChanged
                         )
                     }
                     AppDestination.PRIVACY_SETTINGS -> {
@@ -217,7 +225,7 @@ fun TelefamRootApp(
                                 onToggleFollowProfileUser = { viewModel.toggleFollowUser(activeProfile.userId) },
                                 onToggleFollowAnyUser = viewModel::toggleFollowUser,
                                 onOpenOtherUserProfile = viewModel::openPublicUserProfile,
-                                onMessageComingSoonClick = {},
+                                onMessageComingSoonClick = { viewModel.openOneToOneChatWithDiscoverableUser(activeProfile) },
                                 onSubscribeComingSoonClick = {},
                                 onPostComingSoonClick = {},
                                 onPostsFilterChange = viewModel::onPublicProfilePostsFilterChanged,
@@ -265,9 +273,125 @@ fun TelefamRootApp(
                                 onOwnerClearStatusBanner = viewModel::clearOwnerStatusBanner,
                                 onOpenSettingsAndPrivacy = { viewModel.openSettingsAndPrivacy() },
                                 onOpenOwnerMenu = viewModel::openOwnerMenu,
-                                onCloseOwnerMenu = viewModel::closeOwnerMenu
+                                onCloseOwnerMenu = viewModel::closeOwnerMenu,
+                                onOpenOneToOneChat = viewModel::openOneToOneChatById,
+                                onChatSearchQueryChanged = viewModel::onChatListSearchQueryChanged
                             )
                         }
+                    }
+                    AppDestination.ONE_TO_ONE_CHAT -> {
+                        val activeChat = uiState.activeChatItem
+                            ?: uiState.chatListItems.firstOrNull { it.chatId == uiState.activeChatId }
+                        val ownerUserId = uiState.activeSession?.userId
+                            ?: uiState.savedProfile?.userId
+                            ?: "local_telefam_member"
+                        if (activeChat != null) {
+                            OneToOneChatScreen(
+                                ownerUserId = ownerUserId,
+                                chatItem = activeChat,
+                                messages = uiState.activeChatMessages,
+                                attachments = uiState.activeChatAttachments,
+                                privacySettings = uiState.privacySettings,
+                                inputText = uiState.chatInputText,
+                                replyingToMessage = uiState.replyingToMessage,
+                                editingMessage = uiState.editingMessage,
+                                selectedMessageIds = uiState.selectedMessageIds,
+                                isSelectModeActive = uiState.isSelectModeActive,
+                                voiceRecordingState = voiceRecordingState,
+                                bubblePlaybackState = bubblePlaybackState,
+                                activeKlipyTab = uiState.activeKlipyTab,
+                                klipySearchQuery = uiState.klipySearchQuery,
+                                klipyPagingItems = klipyPagingItems,
+                                klipyRecentItems = uiState.klipyRecentItems,
+                                previewKlipyItem = uiState.previewKlipyItem,
+                                e2eeSnapshot = uiState.activeE2eeVerification,
+                                forwardCandidates = uiState.forwardCandidates,
+                                forwardSearchQuery = uiState.forwardSearchQuery,
+                                selectedForwardUserIds = uiState.selectedForwardUserIds,
+                                isForwardPickerOpen = uiState.isForwardPickerOpen,
+                                onBackClick = viewModel::closeActiveOneToOneChat,
+                                onOpenPeerProfile = viewModel::openPublicUserProfile,
+                                onInputTextChanged = viewModel::onChatInputTextChanged,
+                                onSendTextOrEdit = viewModel::sendCurrentTextOrSaveEdit,
+                                onSendKlipyMedia = viewModel::confirmSendKlipyMediaItem,
+                                onSelectKlipyTab = viewModel::onSelectKlipyTab,
+                                onKlipySearchQueryChanged = viewModel::onKlipySearchQueryChanged,
+                                onPreviewKlipyItem = viewModel::onOpenKlipyItemPreview,
+                                onStartVoiceRecording = viewModel::startVoiceNoteHoldRecording,
+                                onStopVoiceRecordingToPreview = viewModel::stopVoiceNoteHoldRecording,
+                                onToggleVoicePreviewPlayback = viewModel::toggleRecordedVoicePreviewPlay,
+                                onToggleVoiceViewOnce = viewModel::toggleRecordedVoiceNoteViewOnce,
+                                onCancelVoiceRecording = viewModel::discardRecordedVoiceNote,
+                                onSendPreviewedVoiceNote = viewModel::sendRecordedVoiceNote,
+                                onToggleBubbleVoicePlayback = viewModel::toggleBubbleVoiceNotePlayback,
+                                onStartReply = viewModel::onSwipeOrSelectReplyMessage,
+                                onCancelReplyOrEdit = viewModel::onCancelReplyOrEditBanner,
+                                onStartEdit = viewModel::onStartEditingMessage,
+                                onToggleReaction = { msgId, choice ->
+                                    uiState.activeChatMessages.find { it.messageId == msgId }?.let { msg ->
+                                        viewModel.reactToMessage(msg, choice)
+                                    }
+                                },
+                                onTogglePin = { msgId ->
+                                    uiState.activeChatMessages.find { it.messageId == msgId }?.let { msg ->
+                                        viewModel.togglePinMessage(msg)
+                                    }
+                                },
+                                onToggleFavourite = { msgId ->
+                                    uiState.activeChatMessages.find { it.messageId == msgId }?.let { msg ->
+                                        viewModel.toggleFavouriteMessage(msg)
+                                    }
+                                },
+                                onUnsendMessage = { msgId ->
+                                    uiState.activeChatMessages.find { it.messageId == msgId }?.let { msg ->
+                                        viewModel.unsendMessageForBothDevices(msg)
+                                    }
+                                },
+                                onDeleteSingleMessageForMe = { msgId ->
+                                    uiState.activeChatMessages.find { it.messageId == msgId }?.let { msg ->
+                                        viewModel.deleteSingleMessage(msg)
+                                    }
+                                },
+                                onEnterSelectMode = viewModel::enterMessageSelectMode,
+                                onToggleSelectMessage = viewModel::toggleSelectedMessageId,
+                                onSelectAllMessages = viewModel::toggleMarkAllMessagesInSelectMode,
+                                onExitSelectMode = viewModel::exitMessageSelectMode,
+                                onDeleteSelectedMessages = viewModel::deleteSelectedMessagesInSelectMode,
+                                onOpenForwardForSingleMessage = { msg ->
+                                    viewModel.openForwardContactsPicker(listOf(msg))
+                                },
+                                onOpenForwardForSelectedMessages = {
+                                    val selected = uiState.activeChatMessages.filter { it.messageId in uiState.selectedMessageIds }
+                                    viewModel.openForwardContactsPicker(selected)
+                                },
+                                onForwardSearchQueryChanged = viewModel::onForwardSearchQueryChanged,
+                                onToggleForwardRecipient = viewModel::toggleForwardRecipientSelection,
+                                onConfirmForwardSelection = viewModel::confirmForwardSelectedMessages,
+                                onDismissForwardPicker = viewModel::dismissForwardContactsPicker,
+                                onSelectDisappearingOption = viewModel::setActiveChatDisappearingOption,
+                                onClearChat = viewModel::clearActiveChatHistory,
+                                onToggleBlockPeer = viewModel::toggleBlockActiveChatUser,
+                                onSubmitReportPeer = viewModel::submitReportForActiveChatUser,
+                                onOpenE2eeVerificationScreen = viewModel::openActiveChatE2eeVerificationScreen,
+                                onSetE2eeVerified = viewModel::setActiveChatE2eeVerified
+                            )
+                        } else {
+                            MainHomeScreen(
+                                uiState = uiState,
+                                selectedTab = uiState.selectedHomeTab,
+                                onSelectTab = viewModel::selectHomeTab,
+                                onOpenPrivacySettings = viewModel::openPrivacySettings,
+                                onOpenOneToOneChat = viewModel::openOneToOneChatById,
+                                onChatSearchQueryChanged = viewModel::onChatListSearchQueryChanged
+                            )
+                        }
+                    }
+                    AppDestination.E2EE_VERIFICATION -> {
+                        E2eeVerificationScreen(
+                            snapshot = uiState.activeE2eeVerification,
+                            onBackClick = viewModel::closeE2eeVerificationScreen,
+                            onToggleVerified = viewModel::setActiveChatE2eeVerified
+                        )
                     }
                 }
             }

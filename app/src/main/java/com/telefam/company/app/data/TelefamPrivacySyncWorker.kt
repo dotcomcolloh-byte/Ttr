@@ -33,10 +33,12 @@ class TelefamPrivacySyncWorker(
             val pendingProfilesList = dao.getPendingSyncProfiles()
             val pendingAccountSettingsList = dao.getPendingSyncAccountSettings()
             val pendingSocialQueue = dao.getPendingSocialSyncOperations()
+            val pendingChatOutbox = dao.getPendingChatOutboxItems()
             if (pendingPrivacyList.isEmpty() &&
                 pendingProfilesList.isEmpty() &&
                 pendingAccountSettingsList.isEmpty() &&
-                pendingSocialQueue.isEmpty()
+                pendingSocialQueue.isEmpty() &&
+                pendingChatOutbox.isEmpty()
             ) {
                 return Result.success()
             }
@@ -358,6 +360,14 @@ class TelefamPrivacySyncWorker(
                 }
             }
 
+            // 3. Sync pending 1:1 Chat Outbox items (E2EE ciphertext envelopes, edits, unsends, reactions, pins, favourites, disappearing, receipts)
+            for (item in pendingChatOutbox) {
+                val synced = processSingleChatOutboxItem(dao, item, clientDeviceFp)
+                if (!synced) {
+                    allSucceeded = false
+                }
+            }
+
             if (allSucceeded) Result.success() else Result.retry()
         } catch (_: Exception) {
             Result.retry()
@@ -366,6 +376,287 @@ class TelefamPrivacySyncWorker(
 
     companion object {
         private const val UNIQUE_WORK_NAME = "telefam_privacy_offline_sync_worker"
+
+        suspend fun processSingleChatOutboxItem(
+            dao: TelefamDao,
+            item: ChatOutboxEntity,
+            clientDeviceFp: String
+        ): Boolean {
+            return runCatching {
+                val json = JSONObject(item.payloadJson)
+                val isTargetBlocked = dao.isEitherBlocked(item.ownerUserId, item.targetUserId) > 0
+                val targetChat = dao.getChatById(item.chatId)
+                val isTargetDeleted = targetChat?.peerIsDeleted == true
+
+                val actionResp: TelefamChatActionResponse = when (item.actionType) {
+                    "PUBLISH_PREKEYS" -> {
+                        val opkArr = json.optJSONArray("oneTimePreKeys") ?: JSONArray()
+                        val opks = buildList<TelefamOneTimePreKeyDto> {
+                            for (i in 0 until opkArr.length()) {
+                                val o = opkArr.getJSONObject(i)
+                                add(
+                                    TelefamOneTimePreKeyDto(
+                                        preKeyId = o.optInt("prekeyId", i + 1),
+                                        publicKeyBase64 = o.optString("publicKeyBase64", "")
+                                    )
+                                )
+                            }
+                        }
+                        TelefamNetworkClient.api.uploadPreKeyBundle(
+                            rlsUserId = item.ownerUserId,
+                            payload = TelefamPreKeyUploadPayload(
+                                userId = item.ownerUserId,
+                                registrationId = json.optInt("registrationId", 1),
+                                identityPublicKeyBase64 = json.optString("identityPublicKeyBase64", ""),
+                                signedPreKeyId = json.optInt("signedPreKeyId", 1),
+                                signedPreKeyPublicBase64 = json.optString("signedPreKeyPublicBase64", ""),
+                                signedPreKeySignatureBase64 = json.optString("signedPreKeySignatureBase64", ""),
+                                oneTimePreKeys = opks,
+                                clientTimestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "SEND", "FORWARD" -> {
+                        if (isTargetDeleted) {
+                            TelefamChatActionResponse(synced = false, status = "USER_NOT_FOUND", errorCode = "USER_NOT_FOUND")
+                        } else if (isTargetBlocked) {
+                            TelefamChatActionResponse(synced = false, status = "BLOCKED", errorCode = "BLOCKED")
+                        } else {
+                            TelefamNetworkClient.api.sendEncryptedChatMessage(
+                                rlsUserId = item.ownerUserId,
+                                idempotencyKey = item.idempotencyKey,
+                                payload = TelefamSendChatMessagePayload(
+                                    messageId = item.messageId ?: item.outboxId,
+                                    chatId = item.chatId,
+                                    senderUserId = item.ownerUserId,
+                                    recipientUserId = item.targetUserId,
+                                    messageType = json.optString("messageType", "TEXT"),
+                                    ciphertextBase64 = json.optString("ciphertextBase64", ""),
+                                    e2eeHeaderJson = json.optString("ratchetHeaderJson", "{}"),
+                                    replyToMessageId = json.optString("replyToMessageId").takeIf { it.isNotBlank() },
+                                    isForwarded = json.optBoolean("isForwarded", item.actionType == "FORWARD"),
+                                    isViewOnce = json.optBoolean("isViewOnce", false),
+                                    expiresAtMs = json.optLong("expiresAtMs", 0L).takeIf { it > 0L },
+                                    idempotencyKey = item.idempotencyKey,
+                                    clientTimestampMs = item.createdAtMs
+                                )
+                            )
+                        }
+                    }
+                    "EDIT" -> {
+                        TelefamNetworkClient.api.editEncryptedChatMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamEditMessagePayload(
+                                messageId = item.messageId ?: item.outboxId,
+                                chatId = item.chatId,
+                                senderUserId = item.ownerUserId,
+                                recipientUserId = item.targetUserId,
+                                newCiphertextBase64 = json.optString("ciphertextBase64", ""),
+                                newE2eeHeaderJson = json.optString("ratchetHeaderJson", "{}"),
+                                editedAtMs = item.createdAtMs,
+                                idempotencyKey = item.idempotencyKey
+                            )
+                        )
+                    }
+                    "UNSEND" -> {
+                        TelefamNetworkClient.api.unsendChatMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamUnsendMessagePayload(
+                                messageId = item.messageId ?: item.outboxId,
+                                chatId = item.chatId,
+                                senderUserId = item.ownerUserId,
+                                recipientUserId = item.targetUserId,
+                                idempotencyKey = item.idempotencyKey,
+                                clientTimestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "DELETE" -> {
+                        TelefamNetworkClient.api.deleteChatMessageForOwner(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamDeleteMessagePayload(
+                                messageId = item.messageId ?: item.outboxId,
+                                chatId = item.chatId,
+                                ownerUserId = item.ownerUserId,
+                                idempotencyKey = item.idempotencyKey,
+                                clientTimestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "VIEW_ONCE_CONSUMED" -> {
+                        TelefamNetworkClient.api.consumeViewOnceMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamViewOnceConsumedPayload(
+                                messageId = item.messageId ?: item.outboxId,
+                                chatId = item.chatId,
+                                consumerUserId = item.ownerUserId,
+                                senderUserId = item.targetUserId,
+                                idempotencyKey = item.idempotencyKey,
+                                consumedAtMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "PIN" -> {
+                        TelefamNetworkClient.api.pinChatMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamPinMessagePayload(
+                                chatId = item.chatId,
+                                messageId = item.messageId ?: item.outboxId,
+                                userId = item.ownerUserId,
+                                peerUserId = item.targetUserId,
+                                pinned = json.optBoolean("pinned", true),
+                                idempotencyKey = item.idempotencyKey,
+                                timestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "FAVOURITE" -> {
+                        TelefamNetworkClient.api.favouriteChatMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamFavouriteMessagePayload(
+                                chatId = item.chatId,
+                                messageId = item.messageId ?: item.outboxId,
+                                userId = item.ownerUserId,
+                                favourited = json.optBoolean("favourited", true),
+                                idempotencyKey = item.idempotencyKey,
+                                timestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "REACT" -> {
+                        val key = json.optString("reactionKey")
+                        TelefamNetworkClient.api.reactToChatMessage(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamMessageReactionPayload(
+                                chatId = item.chatId,
+                                messageId = item.messageId ?: item.outboxId,
+                                senderUserId = item.ownerUserId,
+                                recipientUserId = item.targetUserId,
+                                reactionCode = if (key == "REMOVE" || key.isBlank()) null else key,
+                                encryptedReactionBase64 = json.optString("ciphertextBase64", ""),
+                                e2eeHeaderJson = json.optString("ratchetHeaderJson", "{}"),
+                                idempotencyKey = item.idempotencyKey,
+                                timestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "DISAPPEARING" -> {
+                        TelefamNetworkClient.api.updateDisappearingSetting(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamDisappearingSettingPayload(
+                                chatId = item.chatId,
+                                userId = item.ownerUserId,
+                                peerUserId = item.targetUserId,
+                                durationSeconds = json.optLong("durationSeconds", 0L),
+                                idempotencyKey = item.idempotencyKey,
+                                updatedAtMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "CLEAR_CHAT" -> {
+                        TelefamNetworkClient.api.clearChatHistory(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamClearChatPayload(
+                                chatId = item.chatId,
+                                ownerUserId = item.ownerUserId,
+                                peerUserId = item.targetUserId,
+                                idempotencyKey = item.idempotencyKey,
+                                clearedAtMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    else -> {
+                        TelefamNetworkClient.api.reportMessageSeen(
+                            rlsUserId = item.ownerUserId,
+                            payload = TelefamDeliveryReceiptPayload(
+                                messageId = item.messageId ?: item.outboxId,
+                                chatId = item.chatId,
+                                recipientUserId = item.ownerUserId,
+                                status = "SEEN",
+                                timestampMs = item.createdAtMs
+                            )
+                        )
+                    }
+                }
+
+                val termCode = actionResp.errorCode
+                    ?: actionResp.status.takeIf { it == "BLOCKED" || it == "USER_NOT_FOUND" }
+
+                if (termCode != null) {
+                    // Terminal server rejection (BLOCKED or USER_NOT_FOUND): stop retrying and update message/chat state
+                    dao.markChatOutboxTerminalRejected(item.outboxId, termCode)
+                    if (item.messageId != null) {
+                        val rejectedDeliveryStatus = if (termCode == "USER_NOT_FOUND") {
+                            "REJECTED_USER_NOT_FOUND"
+                        } else {
+                            "REJECTED_BLOCKED"
+                        }
+                        dao.updateMessageDeliveryStatus(
+                            messageId = item.messageId,
+                            status = rejectedDeliveryStatus,
+                            deliveredAtMs = null,
+                            seenAtMs = null
+                        )
+                        val chat = dao.getChatById(item.chatId)
+                        if (chat != null && chat.lastMessageId == item.messageId) {
+                            dao.upsertChat(
+                                chat.copy(
+                                    lastMessageDeliveryStatus = rejectedDeliveryStatus,
+                                    peerIsDeleted = if (termCode == "USER_NOT_FOUND") true else chat.peerIsDeleted
+                                )
+                            )
+                        }
+                    }
+                    true
+                } else if (actionResp.synced) {
+                    dao.deleteChatOutboxItem(item.outboxId)
+                    if (item.actionType in listOf("SEND", "FORWARD", "EDIT") && item.messageId != null) {
+                        val now = System.currentTimeMillis()
+                        val msg = dao.getMessageById(item.messageId)
+                        if (msg != null && msg.deliveryStatus == "SENDING") {
+                            // Advance from SENDING -> SENT -> DELIVERED
+                            dao.updateMessageDeliveryStatus(
+                                messageId = item.messageId,
+                                status = "DELIVERED",
+                                deliveredAtMs = now,
+                                seenAtMs = msg.seenAtMs
+                            )
+                            dao.upsertDeliveryReceipt(
+                                DeliveryReceiptEntity(
+                                    messageId = item.messageId,
+                                    chatId = item.chatId,
+                                    recipientUserId = item.targetUserId,
+                                    receiptType = "DELIVERED",
+                                    timestampMs = now
+                                )
+                            )
+                            val chat = dao.getChatById(item.chatId)
+                            if (chat != null && chat.lastMessageId == item.messageId) {
+                                dao.upsertChat(
+                                    chat.copy(lastMessageDeliveryStatus = "DELIVERED")
+                                )
+                            }
+                        }
+                    }
+                    true
+                } else {
+                    dao.incrementChatOutboxRetryCount(item.outboxId)
+                    false
+                }
+            }.getOrElse {
+                dao.incrementChatOutboxRetryCount(item.outboxId)
+                false
+            }
+        }
 
         fun enqueueSync(context: Context) {
             runCatching {

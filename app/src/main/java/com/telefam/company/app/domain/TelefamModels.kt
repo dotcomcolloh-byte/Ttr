@@ -27,7 +27,9 @@ enum class PrivacyAudience(val wireValue: String) {
 
     companion object {
         fun fromWire(value: String?): PrivacyAudience =
-            if (value?.uppercase() == "NOBODY") NOBODY else ANYONE
+            if (value?.uppercase() == "NOBODY" || value?.uppercase() == "NO_ONE") NOBODY else ANYONE
+
+        fun fromStorageValue(value: String?): PrivacyAudience = fromWire(value)
     }
 }
 
@@ -581,32 +583,39 @@ object TelefamInputSanitizer {
 
 enum class ReportReasonOption(
     val wireCode: String,
-    @StringRes val labelRes: Int
+    @StringRes val labelRes: Int,
+    val label: String
 ) {
-    SPAM_OR_BOT("SPAM_OR_BOT", R.string.report_q1_spam),
-    IMPERSONATION("IMPERSONATION", R.string.report_q1_impersonation),
-    HARASSMENT("HARASSMENT", R.string.report_q1_harassment),
-    INAPPROPRIATE_CONTENT("INAPPROPRIATE_CONTENT", R.string.report_q1_inappropriate),
-    SCAM_OR_FRAUD("SCAM_OR_FRAUD", R.string.report_q1_scam)
+    SPAM_OR_BOT("SPAM_OR_BOT", R.string.report_q1_spam, "Spam or automated bot"),
+    IMPERSONATION("IMPERSONATION", R.string.report_q1_impersonation, "Impersonating someone"),
+    HARASSMENT("HARASSMENT", R.string.report_q1_harassment, "Harassment or bullying"),
+    INAPPROPRIATE_CONTENT("INAPPROPRIATE_CONTENT", R.string.report_q1_inappropriate, "Inappropriate content"),
+    SCAM_OR_FRAUD("SCAM_OR_FRAUD", R.string.report_q1_scam, "Scam or financial fraud");
+
+    companion object {
+        val HARASSMENT_OR_BULLYING: ReportReasonOption get() = HARASSMENT
+    }
 }
 
 enum class ReportLocationOption(
     val wireCode: String,
-    @StringRes val labelRes: Int
+    @StringRes val labelRes: Int,
+    val label: String
 ) {
-    PROFILE_DETAILS("PROFILE_DETAILS", R.string.report_q2_profile),
-    POSTS_OR_MEDIA("POSTS_OR_MEDIA", R.string.report_q2_posts),
-    DIRECT_MESSAGES("DIRECT_MESSAGES", R.string.report_q2_messages),
-    UNWANTED_CONTACT("UNWANTED_CONTACT", R.string.report_q2_unwanted_contact)
+    PROFILE_DETAILS("PROFILE_DETAILS", R.string.report_q2_profile, "Profile details or bio"),
+    POSTS_OR_MEDIA("POSTS_OR_MEDIA", R.string.report_q2_posts, "Posts or shared media"),
+    DIRECT_MESSAGES("DIRECT_MESSAGES", R.string.report_q2_messages, "Direct messages (1:1 chat)"),
+    UNWANTED_CONTACT("UNWANTED_CONTACT", R.string.report_q2_unwanted_contact, "Unwanted contact")
 }
 
 enum class ReportUrgencyOption(
     val wireCode: String,
-    @StringRes val labelRes: Int
+    @StringRes val labelRes: Int,
+    val label: String
 ) {
-    STANDARD_REVIEW("STANDARD_REVIEW", R.string.report_q3_standard),
-    HIGH_PRIORITY_SAFETY("HIGH_PRIORITY_SAFETY", R.string.report_q3_urgent),
-    HIDE_AND_MUTE("HIDE_AND_MUTE", R.string.report_q3_mute)
+    STANDARD_REVIEW("STANDARD_REVIEW", R.string.report_q3_standard, "Standard safety review"),
+    HIGH_PRIORITY_SAFETY("HIGH_PRIORITY_SAFETY", R.string.report_q3_urgent, "Urgent safety concern"),
+    HIDE_AND_MUTE("HIDE_AND_MUTE", R.string.report_q3_mute, "Report and mute notifications")
 }
 
 object TelefamNumberFormatter {

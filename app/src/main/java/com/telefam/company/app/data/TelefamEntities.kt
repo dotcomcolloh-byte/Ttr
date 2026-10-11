@@ -447,3 +447,284 @@ data class QuickLoginAccountEntity(
     @ColumnInfo(name = "permanent_deletion_at_ms") val permanentDeletionAtMs: Long? = null,
     @ColumnInfo(name = "last_logged_out_at_ms") val lastLoggedOutAtMs: Long = System.currentTimeMillis()
 )
+
+// =============================================================================
+// 1:1 E2EE CHATS, MESSAGES, REACTIONS, PINS, FAVOURITES, DISAPPEARING, RECEIPTS,
+// SIGNAL X3DH + DOUBLE RATCHET KEYS/SESSIONS, OUTBOX & KLIPY CACHE (OFFLINE-FIRST)
+// =============================================================================
+
+@Entity(
+    tableName = "telefam_chats",
+    indices = [
+        Index(value = ["owner_user_id", "peer_user_id"], unique = true),
+        Index(value = ["owner_user_id", "last_message_at_ms"])
+    ]
+)
+data class ChatEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "peer_user_id") val peerUserId: String,
+    @ColumnInfo(name = "peer_full_name") val peerFullName: String,
+    @ColumnInfo(name = "peer_username") val peerUsername: String,
+    @ColumnInfo(name = "peer_avatar_url") val peerAvatarUrl: String? = null,
+    @ColumnInfo(name = "peer_bio") val peerBio: String = "",
+    @ColumnInfo(name = "is_peer_online") val peerIsOnline: Boolean = false,
+    @ColumnInfo(name = "peer_last_seen_ms") val peerLastSeenMs: Long? = null,
+    @ColumnInfo(name = "is_peer_typing") val peerIsTyping: Boolean = false,
+    @ColumnInfo(name = "is_peer_account_deleted") val peerIsDeleted: Boolean = false,
+    @ColumnInfo(name = "is_blocked_by_me") val isBlockedByMe: Boolean = false,
+    @ColumnInfo(name = "is_blocked_by_peer") val isBlockedByPeer: Boolean = false,
+    @ColumnInfo(name = "last_message_id") val lastMessageId: String? = null,
+    @ColumnInfo(name = "last_message_type") val lastMessageType: String = "TEXT", // TEXT, STICKER, GIF, CLIP, VOICE_NOTE
+    @ColumnInfo(name = "last_message_preview") val lastMessagePreview: String = "",
+    @ColumnInfo(name = "last_message_sender_id") val lastMessageSenderId: String = "",
+    @ColumnInfo(name = "last_message_status") val lastMessageDeliveryStatus: String = "SENT", // SENDING, SENT, DELIVERED, SEEN, REJECTED_BLOCKED, REJECTED_USER_NOT_FOUND
+    @ColumnInfo(name = "last_message_media_icon_url") val lastMessageMediaIconUrl: String? = null,
+    @ColumnInfo(name = "last_message_at_ms") val lastMessageTimestampMs: Long = 0L,
+    @ColumnInfo(name = "unread_count") val unreadCount: Int = 0,
+    @ColumnInfo(name = "disappearing_duration_seconds") val disappearingDurationSeconds: Long = 0L, // 0=Off, 86400=24h, 604800=7d, 2592000=1m
+    @ColumnInfo(name = "is_e2ee_verified") val e2eeSafetyNumberVerified: Boolean = false,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "updated_at_ms") val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_chat_messages",
+    indices = [
+        Index(value = ["chat_id", "created_at_ms"]),
+        Index(value = ["owner_user_id", "chat_id"]),
+        Index(value = ["reply_to_message_id"])
+    ]
+)
+data class ChatMessageEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "sender_user_id") val senderUserId: String,
+    @ColumnInfo(name = "recipient_user_id") val recipientUserId: String,
+    @ColumnInfo(name = "message_type") val messageType: String, // TEXT, STICKER, GIF, CLIP, VOICE_NOTE
+    // Decrypted local fields in Room (encrypted on wire; server stores ciphertext only)
+    @ColumnInfo(name = "decrypted_text") val decryptedText: String = "",
+    @ColumnInfo(name = "media_id") val mediaId: String? = null,
+    @ColumnInfo(name = "media_url") val mediaUrl: String? = null,
+    @ColumnInfo(name = "media_preview_url") val mediaPreviewUrl: String? = null,
+    @ColumnInfo(name = "media_local_path") val mediaLocalPath: String? = null,
+    @ColumnInfo(name = "media_title") val mediaTitle: String = "",
+    @ColumnInfo(name = "media_mime_type") val mediaMimeType: String = "",
+    @ColumnInfo(name = "voice_duration_ms") val voiceDurationMs: Long = 0L,
+    @ColumnInfo(name = "voice_waveform_csv") val voiceWaveformCsv: String = "",
+    @ColumnInfo(name = "is_view_once") val isViewOnce: Boolean = false,
+    @ColumnInfo(name = "is_view_once_consumed") val isViewOnceConsumed: Boolean = false,
+    // Reply & Forward metadata
+    @ColumnInfo(name = "reply_to_message_id") val replyToMessageId: String? = null,
+    @ColumnInfo(name = "reply_to_sender_name") val replyToSenderName: String? = null,
+    @ColumnInfo(name = "reply_to_preview_text") val replyToPreviewText: String? = null,
+    @ColumnInfo(name = "reply_to_message_type") val replyToMessageType: String? = null,
+    @ColumnInfo(name = "is_forwarded") val isForwarded: Boolean = false,
+    @ColumnInfo(name = "is_edited") val isEdited: Boolean = false,
+    @ColumnInfo(name = "edited_at_ms") val editedAtMs: Long? = null,
+    // E2EE Signal Double Ratchet Ciphertext Envelope (stored on server)
+    @ColumnInfo(name = "ciphertext_base64") val ciphertextBase64: String,
+    @ColumnInfo(name = "ratchet_header_json") val ratchetHeaderJson: String,
+    // Delivery & Lifecycle state
+    @ColumnInfo(name = "delivery_status") val deliveryStatus: String = "SENDING", // SENDING, SENT, DELIVERED, SEEN, REJECTED_BLOCKED, REJECTED_USER_NOT_FOUND
+    @ColumnInfo(name = "delivered_at_ms") val deliveredAtMs: Long? = null,
+    @ColumnInfo(name = "seen_at_ms") val seenAtMs: Long? = null,
+    @ColumnInfo(name = "expires_at_ms") val expiresAtMs: Long? = null,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_message_reactions",
+    primaryKeys = ["message_id", "reactor_user_id"],
+    indices = [
+        Index(value = ["chat_id"]),
+        Index(value = ["message_id"])
+    ]
+)
+data class MessageReactionEntity(
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "reactor_user_id") val reactorUserId: String,
+    @ColumnInfo(name = "reaction_key") val reactionKey: String, // HEART, THUMBS_UP, FIRE, LAUGH, SURPRISED, PRAY
+    @ColumnInfo(name = "encrypted_reaction_base64") val encryptedReactionBase64: String = "",
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_chat_pins",
+    primaryKeys = ["chat_id", "message_id"],
+    indices = [Index(value = ["chat_id", "pinned_at_ms"])]
+)
+data class ChatPinEntity(
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "pinned_by_user_id") val pinnedByUserId: String,
+    @ColumnInfo(name = "pinned_at_ms") val pinnedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_chat_favourites",
+    primaryKeys = ["owner_user_id", "message_id"],
+    indices = [Index(value = ["owner_user_id", "chat_id"])]
+)
+data class ChatFavouriteEntity(
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "favourited_at_ms") val favouritedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "telefam_disappearing_settings")
+data class DisappearingSettingEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "duration_seconds") val durationSeconds: Long = 0L, // 0, 86400, 604800, 2592000
+    @ColumnInfo(name = "updated_by_user_id") val updatedByUserId: String,
+    @ColumnInfo(name = "updated_at_ms") val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_delivery_receipts",
+    primaryKeys = ["message_id", "recipient_user_id"],
+    indices = [Index(value = ["chat_id"])]
+)
+data class DeliveryReceiptEntity(
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "recipient_user_id") val recipientUserId: String,
+    @ColumnInfo(name = "receipt_type") val receiptType: String, // DELIVERED or SEEN
+    @ColumnInfo(name = "timestamp_ms") val timestampMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "telefam_chat_drafts")
+data class ChatDraftEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "draft_text") val draftText: String = "",
+    @ColumnInfo(name = "reply_to_message_id") val replyToMessageId: String? = null,
+    @ColumnInfo(name = "updated_at_ms") val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "telefam_signal_identity_keys")
+data class SignalIdentityKeyEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "user_id") val userId: String,
+    @ColumnInfo(name = "registration_id") val registrationId: Int,
+    @ColumnInfo(name = "public_key_base64") val publicKeyBase64: String,
+    // Private key is wrapped with AndroidKeyStore AES-256-GCM master key; null for remote peers
+    @ColumnInfo(name = "keystore_wrapped_private_key_base64") val keystoreWrappedPrivateKeyBase64: String? = null,
+    @ColumnInfo(name = "keystore_iv_base64") val keystoreIvBase64: String? = null,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_signal_signed_prekeys",
+    primaryKeys = ["user_id", "prekey_id"]
+)
+data class SignalSignedPreKeyEntity(
+    @ColumnInfo(name = "user_id") val userId: String,
+    @ColumnInfo(name = "prekey_id") val prekeyId: Int,
+    @ColumnInfo(name = "public_key_base64") val publicKeyBase64: String,
+    @ColumnInfo(name = "signature_base64") val signatureBase64: String,
+    @ColumnInfo(name = "keystore_wrapped_private_key_base64") val keystoreWrappedPrivateKeyBase64: String? = null,
+    @ColumnInfo(name = "keystore_iv_base64") val keystoreIvBase64: String? = null,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_signal_one_time_prekeys",
+    primaryKeys = ["user_id", "prekey_id"]
+)
+data class SignalOneTimePreKeyEntity(
+    @ColumnInfo(name = "user_id") val userId: String,
+    @ColumnInfo(name = "prekey_id") val prekeyId: Int,
+    @ColumnInfo(name = "public_key_base64") val publicKeyBase64: String,
+    @ColumnInfo(name = "keystore_wrapped_private_key_base64") val keystoreWrappedPrivateKeyBase64: String? = null,
+    @ColumnInfo(name = "keystore_iv_base64") val keystoreIvBase64: String? = null,
+    @ColumnInfo(name = "is_consumed") val isConsumed: Boolean = false,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_signal_ratchet_sessions",
+    primaryKeys = ["owner_user_id", "peer_user_id"]
+)
+data class SignalRatchetSessionEntity(
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "peer_user_id") val peerUserId: String,
+    @ColumnInfo(name = "keystore_wrapped_state_base64") val keystoreWrappedStateBase64: String,
+    @ColumnInfo(name = "keystore_iv_base64") val keystoreIvBase64: String,
+    @ColumnInfo(name = "local_identity_pub_base64") val localIdentityPubBase64: String,
+    @ColumnInfo(name = "peer_identity_pub_base64") val peerIdentityPubBase64: String,
+    @ColumnInfo(name = "safety_number_digits") val safetyNumberDigits: String,
+    @ColumnInfo(name = "updated_at_ms") val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_chat_outbox",
+    indices = [
+        Index(value = ["owner_user_id", "status", "created_at_ms"]),
+        Index(value = ["idempotency_key"], unique = true)
+    ]
+)
+data class ChatOutboxEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "outbox_id") val outboxId: String,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "target_user_id") val targetUserId: String,
+    @ColumnInfo(name = "message_id") val messageId: String? = null,
+    @ColumnInfo(name = "action_type") val actionType: String, // SEND, EDIT, UNSEND, DELETE, REACT, PIN, FAVOURITE, FORWARD, BLOCK, REPORT, CLEAR_CHAT, DISAPPEARING, DELIVERY_RECEIPT, SEEN_RECEIPT, VIEW_ONCE_CONSUMED, PUBLISH_PREKEYS
+    @ColumnInfo(name = "payload_json") val payloadJson: String,
+    @ColumnInfo(name = "idempotency_key") val idempotencyKey: String,
+    @ColumnInfo(name = "status") val status: String = "PENDING", // PENDING, TERMINAL_REJECTED
+    @ColumnInfo(name = "terminal_error_code") val terminalErrorCode: String? = null, // BLOCKED, USER_NOT_FOUND
+    @ColumnInfo(name = "retry_count") val retryCount: Int = 0,
+    @ColumnInfo(name = "created_at_ms") val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_klipy_cached_items",
+    primaryKeys = ["item_id", "media_tab"],
+    indices = [Index(value = ["media_tab", "search_query", "page_Order"])]
+)
+data class KlipyCachedItemEntity(
+    @ColumnInfo(name = "item_id") val itemId: String,
+    @ColumnInfo(name = "media_tab") val mediaTab: String, // STICKERS, GIFS, CLIPS
+    @ColumnInfo(name = "search_query") val searchQuery: String = "",
+    @ColumnInfo(name = "title") val title: String,
+    @ColumnInfo(name = "media_url") val mediaUrl: String,
+    @ColumnInfo(name = "preview_url") val previewUrl: String,
+    @ColumnInfo(name = "local_cached_path") val localCachedPath: String? = null,
+    @ColumnInfo(name = "mime_type") val mimeType: String = "image/gif",
+    @ColumnInfo(name = "width_px") val widthPx: Int = 240,
+    @ColumnInfo(name = "height_px") val heightPx: Int = 240,
+    @ColumnInfo(name = "duration_ms") val durationMs: Long = 2400L,
+    @ColumnInfo(name = "accent_hex") val accentHex: String = "#C80815",
+    @ColumnInfo(name = "page_Order") val pageOrder: Int = 0,
+    @ColumnInfo(name = "cached_at_ms") val cachedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "telefam_klipy_recents",
+    primaryKeys = ["owner_user_id", "item_id"],
+    indices = [Index(value = ["owner_user_id", "media_tab", "last_used_at_ms"])]
+)
+data class KlipyRecentItemEntity(
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String,
+    @ColumnInfo(name = "item_id") val itemId: String,
+    @ColumnInfo(name = "media_tab") val mediaTab: String, // STICKERS, GIFS, CLIPS
+    @ColumnInfo(name = "title") val title: String,
+    @ColumnInfo(name = "media_url") val mediaUrl: String,
+    @ColumnInfo(name = "preview_url") val previewUrl: String,
+    @ColumnInfo(name = "local_cached_path") val localCachedPath: String? = null,
+    @ColumnInfo(name = "mime_type") val mimeType: String = "image/gif",
+    @ColumnInfo(name = "accent_hex") val accentHex: String = "#C80815",
+    @ColumnInfo(name = "last_used_at_ms") val lastUsedAtMs: Long = System.currentTimeMillis()
+)
+

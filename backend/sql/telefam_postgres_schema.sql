@@ -391,4 +391,97 @@ CREATE POLICY rls_subscriptions_write_own ON telefam_user_subscriptions
     USING (subscriber_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)
     WITH CHECK (subscriber_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
 
+-- =============================================================================
+-- 15. E2EE SIGNAL PROTOCOL KEY BUNDLES (X3DH PREKEY SERVER REGISTRY)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS telefam_e2ee_key_bundles (
+    user_id UUID PRIMARY KEY REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    registration_id INT NOT NULL,
+    identity_public_key_b64 TEXT NOT NULL,
+    signed_prekey_id INT NOT NULL,
+    signed_prekey_public_b64 TEXT NOT NULL,
+    signed_prekey_signature_b64 TEXT NOT NULL,
+    one_time_prekeys_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE telefam_e2ee_key_bundles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE telefam_e2ee_key_bundles FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS rls_e2ee_bundles_read_all ON telefam_e2ee_key_bundles;
+CREATE POLICY rls_e2ee_bundles_read_all ON telefam_e2ee_key_bundles
+    FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS rls_e2ee_bundles_write_own ON telefam_e2ee_key_bundles;
+CREATE POLICY rls_e2ee_bundles_write_own ON telefam_e2ee_key_bundles
+    FOR ALL
+    USING (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid)
+    WITH CHECK (user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid);
+
+-- =============================================================================
+-- 16. 1:1 INDIVIDUAL CHAT CONVERSATIONS & CIPHERTEXT-ONLY MESSAGES
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS telefam_chat_conversations (
+    conversation_id VARCHAR(128) PRIMARY KEY,
+    participant_a_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    participant_b_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    disappearing_timer_mode VARCHAR(24) NOT NULL DEFAULT 'OFF' CHECK (disappearing_timer_mode IN ('OFF', 'HOURS_24', 'DAYS_7', 'MONTH_1')),
+    disappearing_updated_by UUID,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_telefam_conversations_participants
+    ON telefam_chat_conversations(participant_a_id, participant_b_id);
+
+CREATE TABLE IF NOT EXISTS telefam_chat_messages (
+    message_id VARCHAR(96) PRIMARY KEY,
+    conversation_id VARCHAR(128) NOT NULL REFERENCES telefam_chat_conversations(conversation_id) ON DELETE CASCADE,
+    sender_user_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    recipient_user_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    message_type VARCHAR(24) NOT NULL CHECK (message_type IN ('TEXT', 'STICKER', 'GIF', 'CLIP', 'VOICE_NOTE')),
+    ciphertext_b64 TEXT NOT NULL,
+    ratchet_header_json TEXT NOT NULL,
+    reply_to_message_id VARCHAR(96),
+    is_forwarded BOOLEAN NOT NULL DEFAULT FALSE,
+    is_view_once BOOLEAN NOT NULL DEFAULT FALSE,
+    view_once_consumed BOOLEAN NOT NULL DEFAULT FALSE,
+    is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    is_edited BOOLEAN NOT NULL DEFAULT FALSE,
+    delivery_status VARCHAR(24) NOT NULL DEFAULT 'SENT' CHECK (delivery_status IN ('SENDING', 'SENT', 'DELIVERED', 'SEEN')),
+    expires_at TIMESTAMPTZ,
+    idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_telefam_chat_messages_conv
+    ON telefam_chat_messages(conversation_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_telefam_chat_messages_recipient
+    ON telefam_chat_messages(recipient_user_id, delivery_status);
+
+ALTER TABLE telefam_chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE telefam_chat_messages FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS rls_chat_messages_participant_access ON telefam_chat_messages;
+CREATE POLICY rls_chat_messages_participant_access ON telefam_chat_messages
+    FOR ALL
+    USING (
+        sender_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+        OR recipient_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+    )
+    WITH CHECK (
+        sender_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+        OR recipient_user_id = NULLIF(current_setting('app.current_user_id', true), '')::uuid
+    );
+
+CREATE TABLE IF NOT EXISTS telefam_chat_reactions (
+    message_id VARCHAR(96) NOT NULL REFERENCES telefam_chat_messages(message_id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES telefam_users(user_id) ON DELETE CASCADE,
+    ciphertext_reaction_b64 TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id)
+);
+
+
 
