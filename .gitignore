@@ -23,3 +23,4 @@ local.properties
 !.env.example
 !/backend/.env.example
 debug.keystore
+app/google-services.json
