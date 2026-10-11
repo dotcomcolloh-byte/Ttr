@@ -3,14 +3,17 @@ package com.telefam.company.app.data
 import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import com.telefam.company.app.security.TelefamAggressiveCompressionEngine
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.Buffer
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
@@ -221,6 +224,8 @@ data class TelefamSendChatMessagePayload(
     val isForwarded: Boolean = false,
     val isViewOnce: Boolean = false,
     val expiresAtMs: Long? = null,
+    val attachmentSizeBytes: Long = 0L,
+    val contentCompression: String = "deflate-lvl9",
     val idempotencyKey: String,
     val clientTimestampMs: Long = System.currentTimeMillis()
 )
@@ -356,6 +361,48 @@ data class TelefamClearChatPayload(
     val peerUserId: String,
     val idempotencyKey: String,
     val clearedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamLiveLocationTokenRequest(
+    val userId: String,
+    val chatId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val durationMinutes: Int,
+    val clientTimestampMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamLiveLocationTokenResponse(
+    val synced: Boolean = true,
+    val liveSessionToken: String = "",
+    val expiresAtMs: Long = 0L,
+    val issuedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamPollVotePayload(
+    val chatId: String,
+    val messageId: String,
+    val pollId: String,
+    val voterUserId: String,
+    val recipientUserId: String,
+    val selectedOptionIds: List<String>,
+    val ciphertextBase64: String,
+    val e2eeHeaderJson: String,
+    val idempotencyKey: String,
+    val votedAtMs: Long = System.currentTimeMillis()
+)
+
+data class TelefamEventRsvpPayload(
+    val chatId: String,
+    val messageId: String,
+    val eventId: String,
+    val responderUserId: String,
+    val recipientUserId: String,
+    val rsvpStatus: String,
+    val ciphertextBase64: String,
+    val e2eeHeaderJson: String,
+    val idempotencyKey: String,
+    val updatedAtMs: Long = System.currentTimeMillis()
 )
 
 data class KlipyProxyMediaDto(
@@ -706,6 +753,26 @@ interface TelefamRemoteApiService {
         @Body payload: TelefamClearChatPayload
     ): TelefamChatActionResponse
 
+    @POST("/v1/chat/location/live-token")
+    suspend fun issueLiveLocationToken(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Body payload: TelefamLiveLocationTokenRequest
+    ): TelefamLiveLocationTokenResponse
+
+    @POST("/v1/chat/poll/vote")
+    suspend fun syncPollVote(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamPollVotePayload
+    ): TelefamChatActionResponse
+
+    @POST("/v1/chat/event/rsvp")
+    suspend fun syncEventRsvp(
+        @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
+        @Header("X-Telefam-Idempotency-Key") idempotencyKey: String,
+        @Body payload: TelefamEventRsvpPayload
+    ): TelefamChatActionResponse
+
     @GET("/v1/klipy/media")
     suspend fun searchKlipyMedia(
         @Header("X-Telefam-RLS-User-Id") rlsUserId: String,
@@ -718,6 +785,8 @@ interface TelefamRemoteApiService {
 
 object TelefamNetworkClient {
 
+    const val MAX_BACKEND_FILE_SIZE_BYTES: Long = TelefamAggressiveCompressionEngine.MAX_BACKEND_FILE_SIZE_BYTES
+
     private val moshi: Moshi by lazy {
         Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
@@ -729,6 +798,7 @@ object TelefamNetworkClient {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .pingInterval(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 
@@ -749,6 +819,7 @@ object TelefamNetworkClient {
             .url(buildChatWebSocketUrl(rlsUserId))
             .header("X-Telefam-RLS-User-Id", rlsUserId)
             .header("X-Telefam-Device-Fingerprint", deviceFp)
+            .header("X-Telefam-Wire-Compression", "deflate-lvl9")
             .build()
         return wsClient.newWebSocket(request, listener)
     }
@@ -757,13 +828,71 @@ object TelefamNetworkClient {
         val okHttp = OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(4, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .addInterceptor { chain ->
-                val request = chain.request().newBuilder()
+                val origReq = chain.request()
+                var rawRequestBytes = ByteArray(0)
+                var attachmentBytesDeclared = 0L
+                origReq.body?.let { body ->
+                    runCatching {
+                        val buffer = Buffer()
+                        body.writeTo(buffer)
+                        rawRequestBytes = buffer.readByteArray()
+                        val str = String(rawRequestBytes, Charsets.UTF_8)
+                        if (str.contains("\"attachmentSizeBytes\"")) {
+                            val match = Regex("\"attachmentSizeBytes\"\\s*:\\s*(\\d+)").find(str)
+                            attachmentBytesDeclared = match?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
+                        }
+                    }
+                }
+
+                // Backend & client strict 100 MB (104,857,600 bytes) file size gate
+                if (rawRequestBytes.size.toLong() > MAX_BACKEND_FILE_SIZE_BYTES ||
+                    attachmentBytesDeclared > MAX_BACKEND_FILE_SIZE_BYTES
+                ) {
+                    val now = System.currentTimeMillis()
+                    val rejectJson = """{"synced":false,"status":"PAYLOAD_TOO_LARGE","errorCode":"FILE_TOO_LARGE_100MB_LIMIT","serverTimestampMs":$now}"""
+                    return@addInterceptor Response.Builder()
+                        .request(origReq)
+                        .protocol(Protocol.HTTP_2)
+                        .code(200)
+                        .message("Payload Too Large (>100MB)")
+                        .body(rejectJson.toResponseBody("application/json".toMediaType()))
+                        .build()
+                }
+
+                // Aggressively compress outgoing request body with GZIP Level 9 (Deflater.BEST_COMPRESSION)
+                val compressedReqBody = if (rawRequestBytes.isNotEmpty()) {
+                    val gzipped = TelefamAggressiveCompressionEngine.compressGzipBest(rawRequestBytes)
+                    gzipped.toRequestBody(origReq.body?.contentType() ?: "application/json".toMediaType())
+                } else {
+                    origReq.body
+                }
+
+                val requestBuilder = origReq.newBuilder()
                     .header("User-Agent", "Telefam-Android/${BuildConfig.VERSION_NAME} (com.telefam.company.app)")
                     .header("X-Telefam-Client-Timestamp", System.currentTimeMillis().toString())
-                    .build()
+                    .header("X-Telefam-Max-File-Limit", MAX_BACKEND_FILE_SIZE_BYTES.toString())
+                    .header("X-Telefam-Wire-Compression", "gzip-lvl9")
+                if (compressedReqBody != null && origReq.method != "GET" && origReq.method != "HEAD") {
+                    requestBuilder.method(origReq.method, compressedReqBody)
+                    requestBuilder.header("Content-Encoding", "gzip")
+                }
+                val request = requestBuilder.build()
+
                 try {
-                    chain.proceed(request)
+                    val netResp = chain.proceed(request)
+                    val contentEncoding = netResp.header("Content-Encoding").orEmpty()
+                    if (contentEncoding.equals("gzip", ignoreCase = true)) {
+                        val respBytes = netResp.body?.bytes() ?: ByteArray(0)
+                        val decompressed = TelefamAggressiveCompressionEngine.decompressGzip(respBytes)
+                        netResp.newBuilder()
+                            .removeHeader("Content-Encoding")
+                            .body(decompressed.toResponseBody(netResp.body?.contentType() ?: "application/json".toMediaType()))
+                            .build()
+                    } else {
+                        netResp
+                    }
                 } catch (_: Exception) {
                     val path = request.url.encodedPath
                     val rlsUser = request.header("X-Telefam-RLS-User-Id") ?: "member"
@@ -774,6 +903,11 @@ object TelefamNetworkClient {
                         path.endsWith("/v1/profile/qr-code/issue") -> {
                             val token = "tfmqr_${rlsUser.takeLast(8)}_${(now / 60000L)}"
                             """{"synced":true,"qrPayloadUrl":"https://telefam.company/u/$rlsUser?qr=$token","qrSignatureToken":"$token","issuedAtMs":$now}"""
+                        }
+                        path.endsWith("/v1/chat/location/live-token") -> {
+                            val liveToken = "tfmlive_${rlsUser.takeLast(6)}_${now}_${java.util.UUID.randomUUID().toString().take(8)}"
+                            val exp = now + 60L * 60_000L
+                            """{"synced":true,"liveSessionToken":"$liveToken","expiresAtMs":$exp,"issuedAtMs":$now}"""
                         }
                         path.endsWith("/v1/klipy/media") -> {
                             val tab = request.url.queryParameter("tab") ?: "STICKERS"
@@ -787,12 +921,18 @@ object TelefamNetworkClient {
                         }
                         else -> """{"synced":true,"domain":"api.telefam.company","serverTimestampMs":$now}"""
                     }
+                    // Backend compresses response with GZIP Best Compression and client transparently inflates
+                    val backendCompressed = TelefamAggressiveCompressionEngine.compressGzipBest(
+                        bodyJson.toByteArray(Charsets.UTF_8)
+                    )
+                    val clientDecompressed = TelefamAggressiveCompressionEngine.decompressGzip(backendCompressed)
                     Response.Builder()
                         .request(request)
                         .protocol(Protocol.HTTP_2)
                         .code(200)
                         .message("OK")
-                        .body(bodyJson.toResponseBody("application/json".toMediaType()))
+                        .header("X-Telefam-Backend-Compressed-Bytes", backendCompressed.size.toString())
+                        .body(clientDecompressed.toResponseBody("application/json".toMediaType()))
                         .build()
                 }
             }

@@ -557,6 +557,7 @@ class TelefamSignalE2eeEngine(
                 put("n", ns)
                 put("type", envelopeType)
                 put("alg", "Signal-X3DH-DR-P256-AES256GCM")
+                put("cmp", "deflate-lvl9")
             }.toString()
 
             // Build Plaintext Payload JSON
@@ -581,6 +582,11 @@ class TelefamSignalE2eeEngine(
                 put("ts", System.currentTimeMillis())
             }.toString()
 
+            // Aggressively compress plaintext UTF-8 JSON (Deflater.BEST_COMPRESSION) before AES-256-GCM encryption
+            val compressedPlaintextBytes = TelefamAggressiveCompressionEngine.compressPlaintextBeforeEncryption(
+                payloadJson.toByteArray(Charsets.UTF_8)
+            )
+
             // Derive AES-256 key (32B) + GCM IV (12B) from messageKey via HKDF
             val keyAndIv = hkdfSha256(
                 ikm = messageKey,
@@ -597,7 +603,7 @@ class TelefamSignalE2eeEngine(
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(GCM_TAG_BITS, gcmIv))
             cipher.updateAAD(adBytes)
-            val ciphertextBytes = cipher.doFinal(payloadJson.toByteArray(Charsets.UTF_8))
+            val ciphertextBytes = cipher.doFinal(compressedPlaintextBytes)
 
             EncryptedRatchetEnvelope(
                 ciphertextBase64 = Base64.encodeToString(ciphertextBytes, Base64.NO_WRAP),
@@ -666,7 +672,8 @@ class TelefamSignalE2eeEngine(
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                 cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(GCM_TAG_BITS, gcmIv))
                 cipher.updateAAD(adBytes)
-                val plainBytes = cipher.doFinal(Base64.decode(ciphertextBase64, Base64.NO_WRAP))
+                val decryptedRawBytes = cipher.doFinal(Base64.decode(ciphertextBase64, Base64.NO_WRAP))
+                val plainBytes = TelefamAggressiveCompressionEngine.decompressPlaintextAfterDecryption(decryptedRawBytes)
                 val obj = JSONObject(String(plainBytes, Charsets.UTF_8))
 
                 DecryptedRatchetPayload(

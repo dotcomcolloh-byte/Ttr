@@ -63,7 +63,24 @@ enum class LucideIconKind {
     REACTION_SURPRISED,
     REACTION_PRAY,
     ALERT_TRIANGLE,
-    REFRESH_RETRY
+    REFRESH_RETRY,
+    MAIL_EMAIL,
+    USER_PLUS_CONTACT,
+    EXTERNAL_LINK,
+    GLOBE_WEB,
+    KEY_OTP,
+    CAMERA,
+    MAP_PIN,
+    USER_CONTACT,
+    BAR_CHART_POLL,
+    CALENDAR_EVENT,
+    DOWNLOAD,
+    PLUS,
+    ZOOM_IN,
+    PACKAGE_APP,
+    MUSIC_AUDIO,
+    NAVIGATION_LIVE,
+    EYE_VIEW
 }
 
 /**
@@ -742,6 +759,305 @@ fun TelefamLucideIcon(
                     lineTo(sx(15f), sy(9.5f))
                 }
                 drawPath(arrow, color = tint, style = stroke)
+            }
+
+            LucideIconKind.MAIL_EMAIL -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(sx(2.5f), sy(4.5f)),
+                    size = Size(sx(19f), sy(15f)),
+                    cornerRadius = CornerRadius(sx(2.5f), sy(2.5f)),
+                    style = stroke
+                )
+                val flap = Path().apply {
+                    moveTo(sx(3f), sy(6.5f))
+                    lineTo(sx(12f), sy(13f))
+                    lineTo(sx(21f), sy(6.5f))
+                }
+                drawPath(flap, color = tint, style = stroke)
+            }
+
+            LucideIconKind.USER_PLUS_CONTACT -> {
+                drawCircle(
+                    color = tint,
+                    radius = sx(3.8f),
+                    center = Offset(sx(9f), sy(7.5f)),
+                    style = stroke
+                )
+                val body = Path().apply {
+                    moveTo(sx(2.5f), sy(20f))
+                    cubicTo(sx(2.5f), sy(15.5f), sx(5.5f), sy(14f), sx(9f), sy(14f))
+                    cubicTo(sx(12.5f), sy(14f), sx(15.5f), sy(15.5f), sx(15.5f), sy(20f))
+                }
+                drawPath(body, color = tint, style = stroke)
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(19f), sy(8f)),
+                    end = Offset(sx(19f), sy(14f)),
+                    strokeWidth = sw,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(16f), sy(11f)),
+                    end = Offset(sx(22f), sy(11f)),
+                    strokeWidth = sw,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            LucideIconKind.EXTERNAL_LINK -> {
+                val boxPath = Path().apply {
+                    moveTo(sx(18f), sy(13f))
+                    lineTo(sx(18f), sy(19f))
+                    cubicTo(sx(18f), sy(20.1f), sx(17.1f), sy(21f), sx(16f), sy(21f))
+                    lineTo(sx(5f), sy(21f))
+                    cubicTo(sx(3.9f), sy(21f), sx(3f), sy(20.1f), sx(3f), sy(19f))
+                    lineTo(sx(3f), sy(8f))
+                    cubicTo(sx(3f), sy(6.9f), sx(3.9f), sy(6f), sx(5f), sy(6f))
+                    lineTo(sx(11f), sy(6f))
+                }
+                drawPath(boxPath, color = tint, style = stroke)
+                val arrowHead = Path().apply {
+                    moveTo(sx(15f), sy(3f))
+                    lineTo(sx(21f), sy(3f))
+                    lineTo(sx(21f), sy(9f))
+                }
+                drawPath(arrowHead, color = tint, style = stroke)
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(10f), sy(14f)),
+                    end = Offset(sx(21f), sy(3f)),
+                    strokeWidth = sw,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            LucideIconKind.GLOBE_WEB -> {
+                drawCircle(
+                    color = tint,
+                    radius = sx(9.2f),
+                    center = Offset(sx(12f), sy(12f)),
+                    style = stroke
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(2.8f), sy(12f)),
+                    end = Offset(sx(21.2f), sy(12f)),
+                    strokeWidth = sw,
+                    cap = StrokeCap.Round
+                )
+                val meridian = Path().apply {
+                    moveTo(sx(12f), sy(2.8f))
+                    cubicTo(sx(15.5f), sy(6.5f), sx(15.5f), sy(17.5f), sx(12f), sy(21.2f))
+                    moveTo(sx(12f), sy(2.8f))
+                    cubicTo(sx(8.5f), sy(6.5f), sx(8.5f), sy(17.5f), sx(12f), sy(21.2f))
+                }
+                drawPath(meridian, color = tint, style = stroke)
+            }
+
+            LucideIconKind.KEY_OTP -> {
+                drawCircle(
+                    color = tint,
+                    radius = sx(4.2f),
+                    center = Offset(sx(7.5f), sy(15.5f)),
+                    style = stroke
+                )
+                val shaft = Path().apply {
+                    moveTo(sx(10.5f), sy(12.5f))
+                    lineTo(sx(20.5f), sy(2.5f))
+                    moveTo(sx(16.5f), sy(6.5f))
+                    lineTo(sx(19.5f), sy(9.5f))
+                    moveTo(sx(19f), sy(4f))
+                    lineTo(sx(21.5f), sy(6.5f))
+                }
+                drawPath(shaft, color = tint, style = stroke)
+            }
+
+            LucideIconKind.CAMERA -> {
+                val body = Path().apply {
+                    moveTo(sx(14.5f), sy(4f))
+                    lineTo(sx(16.5f), sy(7f))
+                    lineTo(sx(20f), sy(7f))
+                    cubicTo(sx(21.1f), sy(7f), sx(22f), sy(7.9f), sx(22f), sy(9f))
+                    lineTo(sx(22f), sy(18f))
+                    cubicTo(sx(22f), sy(19.1f), sx(21.1f), sy(20f), sx(20f), sy(20f))
+                    lineTo(sx(4f), sy(20f))
+                    cubicTo(sx(2.9f), sy(20f), sx(2f), sy(19.1f), sx(2f), sy(18f))
+                    lineTo(sx(2f), sy(9f))
+                    cubicTo(sx(2f), sy(7.9f), sx(2.9f), sy(7f), sx(4f), sy(7f))
+                    lineTo(sx(7.5f), sy(7f))
+                    lineTo(sx(9.5f), sy(4f))
+                    close()
+                }
+                drawPath(body, color = tint, style = stroke)
+                drawCircle(
+                    color = tint,
+                    radius = sx(3.5f),
+                    center = Offset(sx(12f), sy(13.2f)),
+                    style = stroke
+                )
+            }
+
+            LucideIconKind.MAP_PIN -> {
+                val pin = Path().apply {
+                    moveTo(sx(12f), sy(21.5f))
+                    cubicTo(sx(12f), sy(21.5f), sx(19f), sy(15.5f), sx(19f), sy(10f))
+                    cubicTo(sx(19f), sy(6.1f), sx(15.9f), sy(3f), sx(12f), sy(3f))
+                    cubicTo(sx(8.1f), sy(3f), sx(5f), sy(6.1f), sx(5f), sy(10f))
+                    cubicTo(sx(5f), sy(15.5f), sx(12f), sy(21.5f), sx(12f), sy(21.5f))
+                    close()
+                }
+                drawPath(pin, color = tint, style = if (filled) Fill else stroke)
+                drawCircle(
+                    color = if (filled) Color.White else tint,
+                    radius = sx(2.6f),
+                    center = Offset(sx(12f), sy(10f)),
+                    style = if (filled) Fill else stroke
+                )
+            }
+
+            LucideIconKind.USER_CONTACT -> {
+                drawCircle(
+                    color = tint,
+                    radius = sx(4f),
+                    center = Offset(sx(12f), sy(8f)),
+                    style = stroke
+                )
+                val shoulders = Path().apply {
+                    moveTo(sx(5f), sy(20f))
+                    cubicTo(sx(5f), sy(16f), sx(8f), sy(14f), sx(12f), sy(14f))
+                    cubicTo(sx(16f), sy(14f), sx(19f), sy(16f), sx(19f), sy(20f))
+                }
+                drawPath(shoulders, color = tint, style = stroke)
+            }
+
+            LucideIconKind.BAR_CHART_POLL -> {
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(6f), sy(20f)),
+                    end = Offset(sx(6f), sy(13f)),
+                    strokeWidth = sw * 1.15f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(12f), sy(20f)),
+                    end = Offset(sx(12f), sy(5f)),
+                    strokeWidth = sw * 1.15f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(18f), sy(20f)),
+                    end = Offset(sx(18f), sy(9f)),
+                    strokeWidth = sw * 1.15f,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            LucideIconKind.CALENDAR_EVENT -> {
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(sx(3f), sy(4.5f)),
+                    size = Size(sx(18f), sy(16.5f)),
+                    cornerRadius = CornerRadius(sx(2.5f), sy(2.5f)),
+                    style = stroke
+                )
+                drawLine(color = tint, start = Offset(sx(8f), sy(2.5f)), end = Offset(sx(8f), sy(6.5f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(16f), sy(2.5f)), end = Offset(sx(16f), sy(6.5f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(3f), sy(9.5f)), end = Offset(sx(21f), sy(9.5f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(12f), sy(12.5f)), end = Offset(sx(12f), sy(17.5f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(9.5f), sy(15f)), end = Offset(sx(14.5f), sy(15f)), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+
+            LucideIconKind.DOWNLOAD -> {
+                drawLine(
+                    color = tint,
+                    start = Offset(sx(12f), sy(3.5f)),
+                    end = Offset(sx(12f), sy(15f)),
+                    strokeWidth = sw,
+                    cap = StrokeCap.Round
+                )
+                val arrow = Path().apply {
+                    moveTo(sx(7.5f), sy(10.5f))
+                    lineTo(sx(12f), sy(15f))
+                    lineTo(sx(16.5f), sy(10.5f))
+                }
+                drawPath(arrow, color = tint, style = stroke)
+                val tray = Path().apply {
+                    moveTo(sx(4f), sy(17f))
+                    lineTo(sx(4f), sy(19f))
+                    cubicTo(sx(4f), sy(20.1f), sx(4.9f), sy(21f), sx(6f), sy(21f))
+                    lineTo(sx(18f), sy(21f))
+                    cubicTo(sx(19.1f), sy(21f), sx(20f), sy(20.1f), sx(20f), sy(19f))
+                    lineTo(sx(20f), sy(17f))
+                }
+                drawPath(tray, color = tint, style = stroke)
+            }
+
+            LucideIconKind.PLUS -> {
+                drawLine(color = tint, start = Offset(sx(12f), sy(5f)), end = Offset(sx(12f), sy(19f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(5f), sy(12f)), end = Offset(sx(19f), sy(12f)), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+
+            LucideIconKind.ZOOM_IN -> {
+                drawCircle(color = tint, radius = sx(7.5f), center = Offset(sx(11f), sy(11f)), style = stroke)
+                drawLine(color = tint, start = Offset(sx(16.5f), sy(16.5f)), end = Offset(sx(21f), sy(21f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(11f), sy(8f)), end = Offset(sx(11f), sy(14f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(8f), sy(11f)), end = Offset(sx(14f), sy(11f)), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+
+            LucideIconKind.PACKAGE_APP -> {
+                val cube = Path().apply {
+                    moveTo(sx(12f), sy(2.5f))
+                    lineTo(sx(20.5f), sy(7f))
+                    lineTo(sx(20.5f), sy(17f))
+                    lineTo(sx(12f), sy(21.5f))
+                    lineTo(sx(3.5f), sy(17f))
+                    lineTo(sx(3.5f), sy(7f))
+                    close()
+                }
+                drawPath(cube, color = tint, style = stroke)
+                drawLine(color = tint, start = Offset(sx(3.5f), sy(7f)), end = Offset(sx(12f), sy(12f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(20.5f), sy(7f)), end = Offset(sx(12f), sy(12f)), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(color = tint, start = Offset(sx(12f), sy(12f)), end = Offset(sx(12f), sy(21.5f)), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+
+            LucideIconKind.MUSIC_AUDIO -> {
+                val note = Path().apply {
+                    moveTo(sx(9f), sy(18f))
+                    lineTo(sx(9f), sy(5f))
+                    lineTo(sx(20f), sy(3.5f))
+                    lineTo(sx(20f), sy(16.5f))
+                }
+                drawPath(note, color = tint, style = stroke)
+                drawCircle(color = tint, radius = sx(2.8f), center = Offset(sx(6.2f), sy(18f)), style = stroke)
+                drawCircle(color = tint, radius = sx(2.8f), center = Offset(sx(17.2f), sy(16.5f)), style = stroke)
+            }
+
+            LucideIconKind.NAVIGATION_LIVE -> {
+                val nav = Path().apply {
+                    moveTo(sx(3f), sy(11f))
+                    lineTo(sx(21f), sy(3f))
+                    lineTo(sx(13f), sy(21f))
+                    lineTo(sx(11f), sy(13f))
+                    close()
+                }
+                drawPath(nav, color = tint, style = if (filled) Fill else stroke)
+            }
+
+            LucideIconKind.EYE_VIEW -> {
+                val eye = Path().apply {
+                    moveTo(sx(2f), sy(12f))
+                    cubicTo(sx(4.5f), sy(6.5f), sx(8.2f), sy(5f), sx(12f), sy(5f))
+                    cubicTo(sx(15.8f), sy(5f), sx(19.5f), sy(6.5f), sx(22f), sy(12f))
+                    cubicTo(sx(19.5f), sy(17.5f), sx(15.8f), sy(19f), sx(12f), sy(19f))
+                    cubicTo(sx(8.2f), sy(19f), sx(4.5f), sy(17.5f), sx(2f), sy(12f))
+                    close()
+                }
+                drawPath(eye, color = tint, style = stroke)
+                drawCircle(color = tint, radius = sx(3f), center = Offset(sx(12f), sy(12f)), style = stroke)
             }
         }
     }

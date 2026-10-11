@@ -491,6 +491,143 @@ private fun OneToOneChatListRow(
                                     )
                                 }
 
+                                ChatMessageType.IMAGE, ChatMessageType.VIDEO, ChatMessageType.MEDIA_ALBUM -> {
+                                    SmallMediaPreviewBadge(
+                                        messageType = item.lastMessageType,
+                                        previewUrl = item.lastMessageMediaIconUrl
+                                    )
+                                    val fallbackLabel = when (item.lastMessageType) {
+                                        ChatMessageType.IMAGE -> "Photo"
+                                        ChatMessageType.VIDEO -> "Video"
+                                        ChatMessageType.MEDIA_ALBUM -> "Album"
+                                        else -> "Media"
+                                    }
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { fallbackLabel },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                ChatMessageType.LOCATION -> {
+                                    TelefamLucideIcon(
+                                        kind = LucideIconKind.MAP_PIN,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        size = 15.dp
+                                    )
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { "Location" },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                ChatMessageType.CONTACT -> {
+                                    TelefamLucideIcon(
+                                        kind = LucideIconKind.USER_CONTACT,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        size = 15.dp
+                                    )
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { "Contact" },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                ChatMessageType.DOCUMENT -> {
+                                    TelefamLucideIcon(
+                                        kind = LucideIconKind.FILE_DOC,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        size = 15.dp
+                                    )
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { "Document" },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                ChatMessageType.POLL -> {
+                                    TelefamLucideIcon(
+                                        kind = LucideIconKind.BAR_CHART_POLL,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        size = 15.dp
+                                    )
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { "Poll" },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                ChatMessageType.EVENT -> {
+                                    TelefamLucideIcon(
+                                        kind = LucideIconKind.CALENDAR_EVENT,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        size = 15.dp
+                                    )
+                                    Text(
+                                        text = item.lastMessagePreview.ifBlank { "Event" },
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = if (item.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium
+                                        ),
+                                        color = if (item.unreadCount > 0) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
                                 ChatMessageType.TEXT -> {
                                     Text(
                                         text = item.lastMessagePreview,
@@ -546,26 +683,49 @@ fun SmallMediaPreviewBadge(
     previewUrl: String?,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val iconKind = when (messageType) {
         ChatMessageType.STICKER -> LucideIconKind.STICKER
         ChatMessageType.GIF -> LucideIconKind.GIF
-        ChatMessageType.CLIP -> LucideIconKind.CLIP_VIDEO
+        ChatMessageType.CLIP, ChatMessageType.VIDEO -> LucideIconKind.CLIP_VIDEO
+        ChatMessageType.IMAGE, ChatMessageType.MEDIA_ALBUM -> LucideIconKind.MEDIA_GALLERY
         else -> LucideIconKind.MEDIA_GALLERY
     }
     Box(
         modifier = modifier
-            .size(18.dp)
-            .clip(RoundedCornerShape(4.dp))
+            .size(20.dp)
+            .clip(RoundedCornerShape(5.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
         contentAlignment = Alignment.Center
     ) {
         if (!previewUrl.isNullOrBlank() && !previewUrl.startsWith("https://cdn.klipy.co/")) {
+            val dataModel: Any = if (previewUrl.startsWith("/")) File(previewUrl) else previewUrl
             AsyncImage(
-                model = previewUrl,
+                model = ImageRequest.Builder(context)
+                    .data(dataModel)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .crossfade(false)
+                    .build(),
                 contentDescription = messageType.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+            if (messageType == ChatMessageType.VIDEO) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.32f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    TelefamLucideIcon(
+                        kind = LucideIconKind.PLAY,
+                        tint = Color.White,
+                        size = 10.dp,
+                        filled = true
+                    )
+                }
+            }
         } else {
             TelefamLucideIcon(
                 kind = iconKind,

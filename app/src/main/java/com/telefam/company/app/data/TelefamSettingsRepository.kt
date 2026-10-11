@@ -975,11 +975,15 @@ class TelefamSettingsRepository(
             runCatching {
                 val dir = File(context.filesDir, "support_attachments").apply { mkdirs() }
                 val dest = File(dir, "report_${numericId}.jpg")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(dest).use { output ->
-                        input.copyTo(output)
-                    }
-                }
+                val copied = context.contentResolver.openInputStream(uri)?.use { input ->
+                    com.telefam.company.app.security.TelefamAggressiveCompressionEngine.copyStreamBounded(
+                        input = input,
+                        destFile = dest,
+                        maxAllowedBytes = com.telefam.company.app.security.TelefamAggressiveCompressionEngine.MAX_BACKEND_FILE_SIZE_BYTES
+                    )
+                } ?: false
+                if (!copied || !dest.exists()) return@runCatching null
+                com.telefam.company.app.security.TelefamAggressiveCompressionEngine.compressImageFileAggressivelyInPlace(dest)
                 dest.absolutePath
             }.getOrNull()
         }

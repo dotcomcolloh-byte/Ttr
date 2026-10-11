@@ -373,7 +373,16 @@ fun TelefamRootApp(
                                 onToggleBlockPeer = viewModel::toggleBlockActiveChatUser,
                                 onSubmitReportPeer = viewModel::submitReportForActiveChatUser,
                                 onOpenE2eeVerificationScreen = viewModel::openActiveChatE2eeVerificationScreen,
-                                onSetE2eeVerified = viewModel::setActiveChatE2eeVerified
+                                onSetE2eeVerified = viewModel::setActiveChatE2eeVerified,
+                                onSendMediaAttachments = viewModel::sendMediaAttachmentItems,
+                                onSendLocationAttachment = viewModel::sendLocationAttachment,
+                                onSendContactAttachment = viewModel::sendContactAttachment,
+                                onSendDocumentAttachment = viewModel::sendDocumentAttachment,
+                                onSendPollAttachment = viewModel::sendPollAttachment,
+                                onSendEventAttachment = viewModel::sendEventAttachment,
+                                onVotePollMessage = viewModel::voteOnPollMessage,
+                                onRsvpEventMessage = viewModel::rsvpToEventMessage,
+                                onConsumeViewOnceMessage = viewModel::consumeViewOnceMessage
                             )
                         } else {
                             MainHomeScreen(

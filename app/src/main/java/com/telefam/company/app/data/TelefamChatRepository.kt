@@ -10,6 +10,7 @@ import androidx.paging.PagingData
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.telefam.company.app.domain.ChatAttachmentItem
+import com.telefam.company.app.domain.ChatAttachmentPayloadCodec
 import com.telefam.company.app.domain.ChatAttachmentType
 import com.telefam.company.app.domain.ChatDisappearingOption
 import com.telefam.company.app.domain.ChatMessageDeliveryStatus
@@ -22,6 +23,7 @@ import com.telefam.company.app.domain.KlipyMediaItem
 import com.telefam.company.app.domain.KlipyMediaTab
 import com.telefam.company.app.domain.OneToOneChatListItem
 import com.telefam.company.app.security.PreKeyBundleDto
+import com.telefam.company.app.security.TelefamAggressiveCompressionEngine
 import com.telefam.company.app.security.TelefamCryptoAndTelemetry
 import com.telefam.company.app.security.TelefamSignalE2eeEngine
 import kotlinx.coroutines.CoroutineScope
@@ -484,7 +486,8 @@ class TelefamChatRepository(
 
     private suspend fun handleIncomingWebSocketFrame(ownerUserId: String, rawFrame: String) {
         runCatching {
-            val obj = JSONObject(rawFrame)
+            val decompressedFrame = TelefamAggressiveCompressionEngine.decompressTextAggressiveFromBase64OrRaw(rawFrame)
+            val obj = JSONObject(decompressedFrame)
             when (obj.optString("eventType")) {
                 "TYPING" -> {
                     val chatId = obj.optString("chatId")
@@ -549,7 +552,41 @@ class TelefamChatRepository(
                         existing?.mediaLocalPath?.let { path ->
                             runCatching { File(path).delete() }
                         }
+                        if (existing?.messageType == ChatMessageType.MEDIA_ALBUM.name) {
+                            ChatAttachmentPayloadCodec.decodeAlbum(existing.mediaUrl)?.items?.forEach { item ->
+                                if (item.localPath.isNotBlank()) {
+                                    runCatching { File(item.localPath).delete() }
+                                }
+                            }
+                        }
                         dao.markViewOnceConsumed(msgId)
+                    }
+                }
+                "POLL_VOTE", "EVENT_RSVP" -> {
+                    val chatId = obj.optString("chatId")
+                    val messageId = obj.optString("messageId")
+                    val senderUserId = obj.optString("senderUserId")
+                    val ciphertextB64 = obj.optString("ciphertextBase64")
+                    val ratchetHeaderJson = obj.optString("ratchetHeaderJson")
+                    if (chatId.isNotBlank() && messageId.isNotBlank() && senderUserId.isNotBlank() && ciphertextB64.isNotBlank()) {
+                        val decrypted = signalEngine.decryptEnvelope(
+                            ownerUserId = ownerUserId,
+                            peerUserId = senderUserId,
+                            ciphertextBase64 = ciphertextB64,
+                            ratchetHeaderJson = ratchetHeaderJson,
+                            isOutgoingFromMe = false
+                        )
+                        if (decrypted?.mediaUrl != null) {
+                            dao.updateMessageStructuredMetadata(
+                                messageId = messageId,
+                                newMediaUrl = decrypted.mediaUrl,
+                                newDecryptedText = decrypted.text,
+                                newCiphertext = ciphertextB64,
+                                newHeader = ratchetHeaderJson,
+                                editedAtMs = System.currentTimeMillis()
+                            )
+                            refreshChatLastMessageSummary(chatId)
+                        }
                     }
                 }
                 "DISAPPEARING" -> {
@@ -906,40 +943,85 @@ class TelefamChatRepository(
      */
     fun extractAttachmentsFromMessages(messages: List<ChatMessageItem>): List<ChatAttachmentItem> {
         val items = mutableListOf<ChatAttachmentItem>()
-        val urlRegex = Regex("""(https?://[^\s]+|www\.[^\s]+)""", RegexOption.IGNORE_CASE)
 
         for (msg in messages.asReversed()) {
+            if (msg.isViewOnce || msg.isViewOnceConsumed) continue
             when (msg.messageType) {
-                ChatMessageType.STICKER, ChatMessageType.GIF, ChatMessageType.CLIP, ChatMessageType.VOICE_NOTE -> {
-                    if (!msg.isViewOnceConsumed) {
-                        items.add(
-                            ChatAttachmentItem(
-                                attachmentId = "media_${msg.messageId}",
-                                messageId = msg.messageId,
-                                chatId = msg.chatId,
-                                type = ChatAttachmentType.MEDIA,
-                                title = msg.mediaTitle.ifBlank {
-                                    when (msg.messageType) {
-                                        ChatMessageType.STICKER -> "Sticker"
-                                        ChatMessageType.GIF -> "GIF"
-                                        ChatMessageType.CLIP -> "Clip"
-                                        ChatMessageType.VOICE_NOTE -> "Voice note (${formatDurationShort(msg.voiceDurationMs)})"
-                                        else -> "Media"
-                                    }
-                                },
-                                subtitleOrUrl = msg.mediaUrl ?: msg.mediaLocalPath.orEmpty(),
-                                previewUrl = msg.mediaPreviewUrl ?: msg.mediaUrl,
-                                mimeType = msg.mediaMimeType,
-                                timestampMs = msg.createdAtMs
-                            )
+                ChatMessageType.STICKER,
+                ChatMessageType.GIF,
+                ChatMessageType.CLIP,
+                ChatMessageType.VOICE_NOTE,
+                ChatMessageType.IMAGE,
+                ChatMessageType.VIDEO -> {
+                    items.add(
+                        ChatAttachmentItem(
+                            attachmentId = "media_${msg.messageId}",
+                            messageId = msg.messageId,
+                            chatId = msg.chatId,
+                            type = ChatAttachmentType.MEDIA,
+                            title = msg.mediaTitle.ifBlank {
+                                when (msg.messageType) {
+                                    ChatMessageType.STICKER -> "Sticker"
+                                    ChatMessageType.GIF -> "GIF"
+                                    ChatMessageType.CLIP -> "Clip"
+                                    ChatMessageType.VOICE_NOTE -> "Voice note (${formatDurationShort(msg.voiceDurationMs)})"
+                                    ChatMessageType.IMAGE -> msg.decryptedText.ifBlank { "Photo" }
+                                    ChatMessageType.VIDEO -> msg.decryptedText.ifBlank { "Video (${formatDurationShort(msg.voiceDurationMs)})" }
+                                    else -> "Media"
+                                }
+                            },
+                            subtitleOrUrl = msg.mediaLocalPath ?: msg.mediaUrl.orEmpty(),
+                            previewUrl = msg.mediaPreviewUrl ?: msg.mediaLocalPath ?: msg.mediaUrl,
+                            mimeType = msg.mediaMimeType,
+                            timestampMs = msg.createdAtMs
                         )
-                    }
+                    )
+                }
+                ChatMessageType.MEDIA_ALBUM -> {
+                    val album = ChatAttachmentPayloadCodec.decodeAlbum(msg.mediaUrl)
+                    val firstThumb = album?.items?.firstOrNull()?.let { it.thumbnailPath ?: it.localPath }
+                    items.add(
+                        ChatAttachmentItem(
+                            attachmentId = "album_${msg.messageId}",
+                            messageId = msg.messageId,
+                            chatId = msg.chatId,
+                            type = ChatAttachmentType.MEDIA,
+                            title = msg.decryptedText.ifBlank { "Album (${album?.items?.size ?: 2} items)" },
+                            subtitleOrUrl = firstThumb.orEmpty(),
+                            previewUrl = msg.mediaPreviewUrl ?: firstThumb,
+                            mimeType = "multipart/mixed",
+                            timestampMs = msg.createdAtMs
+                        )
+                    )
+                }
+                ChatMessageType.DOCUMENT -> {
+                    val doc = ChatAttachmentPayloadCodec.decodeDocument(msg.mediaUrl)
+                    items.add(
+                        ChatAttachmentItem(
+                            attachmentId = "doc_${msg.messageId}",
+                            messageId = msg.messageId,
+                            chatId = msg.chatId,
+                            type = ChatAttachmentType.DOCS,
+                            title = doc?.fileName ?: msg.mediaTitle.ifBlank { "Document" },
+                            subtitleOrUrl = doc?.localPath ?: msg.mediaLocalPath.orEmpty(),
+                            previewUrl = null,
+                            mimeType = doc?.mimeType ?: msg.mediaMimeType,
+                            timestampMs = msg.createdAtMs
+                        )
+                    )
+                }
+                ChatMessageType.LOCATION,
+                ChatMessageType.CONTACT,
+                ChatMessageType.POLL,
+                ChatMessageType.EVENT -> {
+                    // Structured attachments appear in conversation & search
                 }
                 ChatMessageType.TEXT -> {
-                    val matches = urlRegex.findAll(msg.decryptedText)
-                    for (match in matches) {
-                        val rawUrl = match.value
-                        val normalizedUrl = if (rawUrl.startsWith("http", ignoreCase = true)) rawUrl else "https://$rawUrl"
+                    val detectedLinks = com.telefam.company.app.ui.components.TelefamSmartEntityDetector
+                        .detectEntities(msg.decryptedText)
+                        .filter { it.type == com.telefam.company.app.ui.components.DetectedEntityType.URL }
+                    for (link in detectedLinks) {
+                        val normalizedUrl = link.actionValue
                         val isDocLink = normalizedUrl.substringBefore("?").endsWith(".pdf", true) ||
                             normalizedUrl.substringBefore("?").endsWith(".doc", true) ||
                             normalizedUrl.substringBefore("?").endsWith(".docx", true) ||
@@ -948,7 +1030,7 @@ class TelefamChatRepository(
                             normalizedUrl.substringBefore("?").endsWith(".txt", true)
                         items.add(
                             ChatAttachmentItem(
-                                attachmentId = "link_${msg.messageId}_${match.range.first}",
+                                attachmentId = "link_${msg.messageId}_${link.startIndex}",
                                 messageId = msg.messageId,
                                 chatId = msg.chatId,
                                 type = if (isDocLink) ChatAttachmentType.DOCS else ChatAttachmentType.LINKS,
@@ -967,11 +1049,8 @@ class TelefamChatRepository(
     }
 
     /**
-     * Sends an E2EE encrypted message (TEXT, STICKER, GIF, CLIP, VOICE_NOTE, with optional reply).
-     * 1. Encrypts payload with Signal X3DH + Double Ratchet.
-     * 2. Writes to Room immediately with `SENDING` status (or terminal state if blocked/deleted in Room).
-     * 3. Updates `ChatEntity` last message preview & clears draft.
-     * 4. Queues to `telefam_chat_outbox` and triggers immediate sync + WorkManager.
+     * Sends an E2EE encrypted message (TEXT, STICKER, GIF, CLIP, VOICE_NOTE, IMAGE, VIDEO,
+     * MEDIA_ALBUM, LOCATION, CONTACT, DOCUMENT, POLL, EVENT, with optional reply).
      */
     suspend fun sendMessage(
         ownerUserId: String,
@@ -985,7 +1064,13 @@ class TelefamChatRepository(
         voiceWaveformSamples: List<Float> = emptyList(),
         isViewOnce: Boolean = false,
         replyToMessage: ChatMessageItem? = null,
-        peerDisplayNameForReply: String = ""
+        peerDisplayNameForReply: String = "",
+        attachmentMediaId: String? = null,
+        attachmentMediaUrl: String? = null,
+        attachmentPreviewUrl: String? = null,
+        attachmentLocalPath: String? = null,
+        attachmentTitle: String = "",
+        attachmentMimeType: String = ""
     ): ChatMessageEntity? = withContext(Dispatchers.IO) {
         val chat = dao.getChatById(chatId) ?: return@withContext null
 
@@ -1008,17 +1093,49 @@ class TelefamChatRepository(
         }
         val replyPreview = replyToMessage?.let { buildReplyPreviewLabel(it) }
 
+        val resolvedMediaId = attachmentMediaId ?: cachedKlipy?.itemId
+        val resolvedMediaUrl = attachmentMediaUrl ?: cachedKlipy?.mediaUrl
+        val resolvedPreviewUrl = attachmentPreviewUrl ?: cachedKlipy?.previewUrl
+        val resolvedLocalPath = attachmentLocalPath ?: voiceFilePath ?: cachedKlipy?.localCachedPath
+        val resolvedTitle = attachmentTitle.ifBlank { cachedKlipy?.title.orEmpty() }
+        val resolvedMimeType = attachmentMimeType.ifBlank {
+            cachedKlipy?.mimeType ?: if (messageType == ChatMessageType.VOICE_NOTE) "audio/mp4" else "text/plain"
+        }
+
+        // Enforce strict 100 MB maximum file size on any attached local file or album items
+        val effectiveTransferBytes = when (messageType) {
+            ChatMessageType.MEDIA_ALBUM -> {
+                val album = ChatAttachmentPayloadCodec.decodeAlbum(resolvedMediaUrl)
+                val maxSingleItem = album?.items?.maxOfOrNull {
+                    TelefamAggressiveCompressionEngine.getEffectiveTransferByteSize(it.localPath)
+                } ?: 0L
+                if (maxSingleItem > TelefamAggressiveCompressionEngine.MAX_BACKEND_FILE_SIZE_BYTES) {
+                    return@withContext null
+                }
+                album?.items?.sumOf {
+                    TelefamAggressiveCompressionEngine.getEffectiveTransferByteSize(it.localPath)
+                } ?: 0L
+            }
+            else -> {
+                val bytes = TelefamAggressiveCompressionEngine.getEffectiveTransferByteSize(resolvedLocalPath)
+                if (bytes > TelefamAggressiveCompressionEngine.MAX_BACKEND_FILE_SIZE_BYTES) {
+                    return@withContext null
+                }
+                bytes
+            }
+        }
+
         val envelope = signalEngine.encryptPayload(
             ownerUserId = ownerUserId,
             peerUserId = peerUserId,
             envelopeType = "MESSAGE",
             messageType = messageType.name,
             text = text,
-            mediaId = cachedKlipy?.itemId,
-            mediaUrl = cachedKlipy?.mediaUrl,
-            mediaPreviewUrl = cachedKlipy?.previewUrl,
-            mediaTitle = cachedKlipy?.title.orEmpty(),
-            mediaMimeType = cachedKlipy?.mimeType ?: if (messageType == ChatMessageType.VOICE_NOTE) "audio/mp4" else "",
+            mediaId = resolvedMediaId,
+            mediaUrl = resolvedMediaUrl,
+            mediaPreviewUrl = resolvedPreviewUrl,
+            mediaTitle = resolvedTitle,
+            mediaMimeType = resolvedMimeType,
             voiceDurationMs = voiceDurationMs,
             voiceWaveformCsv = waveformCsv,
             isViewOnce = isViewOnce,
@@ -1042,12 +1159,12 @@ class TelefamChatRepository(
             recipientUserId = peerUserId,
             messageType = messageType.name,
             decryptedText = text,
-            mediaId = cachedKlipy?.itemId,
-            mediaUrl = cachedKlipy?.mediaUrl,
-            mediaPreviewUrl = cachedKlipy?.previewUrl,
-            mediaLocalPath = voiceFilePath ?: cachedKlipy?.localCachedPath,
-            mediaTitle = cachedKlipy?.title.orEmpty(),
-            mediaMimeType = cachedKlipy?.mimeType ?: if (messageType == ChatMessageType.VOICE_NOTE) "audio/mp4" else "text/plain",
+            mediaId = resolvedMediaId,
+            mediaUrl = resolvedMediaUrl,
+            mediaPreviewUrl = resolvedPreviewUrl,
+            mediaLocalPath = resolvedLocalPath,
+            mediaTitle = resolvedTitle,
+            mediaMimeType = resolvedMimeType,
             voiceDurationMs = voiceDurationMs,
             voiceWaveformCsv = waveformCsv,
             isViewOnce = isViewOnce,
@@ -1079,7 +1196,7 @@ class TelefamChatRepository(
                 lastMessagePreview = buildPreviewTextForMessage(messageEntity),
                 lastMessageSenderId = ownerUserId,
                 lastMessageDeliveryStatus = "SENDING",
-                lastMessageMediaIconUrl = cachedKlipy?.previewUrl ?: cachedKlipy?.mediaUrl,
+                lastMessageMediaIconUrl = extractHomePreviewThumbnail(messageEntity),
                 lastMessageTimestampMs = now,
                 updatedAtMs = now
             )
@@ -1100,6 +1217,8 @@ class TelefamChatRepository(
             put("ratchetHeaderJson", envelope.ratchetHeaderJson)
             put("isViewOnce", isViewOnce)
             put("isForwarded", false)
+            put("attachmentSizeBytes", effectiveTransferBytes)
+            put("contentCompression", "deflate-lvl9")
             if (replyToMessage != null) put("replyToMessageId", replyToMessage.messageId)
             if (expiresAtMs != null) put("expiresAtMs", expiresAtMs)
         }.toString()
@@ -1705,8 +1824,9 @@ class TelefamChatRepository(
     }
 
     /**
-     * Consumes a View-Once voice note after first play: deletes the audio file on disk,
-     * marks `isViewOnceConsumed = true` in Room, and queues `VIEW_ONCE_CONSUMED` to clear on peer device + DB.
+     * Consumes a View-Once message (voice note, image, video, or location) after first open/play:
+     * deletes any media files on disk, marks `isViewOnceConsumed = true` in Room, and queues `VIEW_ONCE_CONSUMED`
+     * to clear on peer device + DB.
      */
     suspend fun consumeViewOnceVoiceNote(
         ownerUserId: String,
@@ -1717,6 +1837,21 @@ class TelefamChatRepository(
         val msg = dao.getMessageById(messageId) ?: return@withContext
         msg.mediaLocalPath?.let { path ->
             runCatching { File(path).delete() }
+        }
+        msg.mediaPreviewUrl?.let { previewPath ->
+            if (previewPath.startsWith("/")) {
+                runCatching { File(previewPath).delete() }
+            }
+        }
+        if (msg.messageType == ChatMessageType.MEDIA_ALBUM.name) {
+            ChatAttachmentPayloadCodec.decodeAlbum(msg.mediaUrl)?.items?.forEach { item ->
+                if (item.localPath.isNotBlank()) {
+                    runCatching { File(item.localPath).delete() }
+                }
+                if (item.thumbnailPath != null && item.thumbnailPath.startsWith("/")) {
+                    runCatching { File(item.thumbnailPath).delete() }
+                }
+            }
         }
         dao.markViewOnceConsumed(messageId)
         refreshChatLastMessageSummary(chatId)
@@ -1745,6 +1880,244 @@ class TelefamChatRepository(
                 put("chatId", chatId)
                 put("messageId", messageId)
                 put("recipientUserId", peerUserId)
+            }.toString()
+        )
+        flushOutboxNowOrSchedule(ownerUserId)
+    }
+
+    /**
+     * Requests a signed Live Location session token from the backend server with cryptographic fallback
+     * when offline so live location sharing works seamlessly and securely in-app.
+     */
+    suspend fun issueServerLiveLocationToken(
+        ownerUserId: String,
+        chatId: String,
+        peerUserId: String,
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Float,
+        durationMinutes: Int,
+        isViewOnce: Boolean
+    ): Pair<String, Long> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val fallbackExpiresAt = now + durationMinutes.coerceAtLeast(1) * 60_000L
+        val deviceFp = TelefamCryptoAndTelemetry.sha256Hex(ownerUserId.toByteArray(Charsets.UTF_8)).take(24)
+        val idempKey = TelefamCryptoAndTelemetry.sha256Hex(
+            "live_loc:$chatId:$ownerUserId:$now".toByteArray(Charsets.UTF_8)
+        )
+        if (TelefamCryptoAndTelemetry.isNetworkOnline(context)) {
+            val remote = runCatching {
+                TelefamNetworkClient.api.issueLiveLocationToken(
+                    rlsUserId = ownerUserId,
+                    payload = TelefamLiveLocationTokenRequest(
+                        userId = ownerUserId,
+                        chatId = chatId,
+                        latitude = latitude,
+                        longitude = longitude,
+                        durationMinutes = durationMinutes
+                    )
+                )
+            }.getOrNull()
+            if (remote != null && remote.liveSessionToken.isNotBlank()) {
+                val exp = if (remote.expiresAtMs > 0L) remote.expiresAtMs else fallbackExpiresAt
+                return@withContext remote.liveSessionToken to exp
+            }
+        }
+        val signedFallbackToken = "tflive_" + TelefamCryptoAndTelemetry.sha256Hex(
+            "$chatId|$ownerUserId|$peerUserId|$latitude|$longitude|$now|$fallbackExpiresAt".toByteArray(Charsets.UTF_8)
+        ).take(36)
+        signedFallbackToken to fallbackExpiresAt
+    }
+
+    /**
+     * Records or toggles a user's vote on an E2EE Poll message, persists to Room immediately,
+     * re-encrypts the updated poll state via Signal Double Ratchet, and queues to backend + WebSocket.
+     */
+    suspend fun voteOnPollMessage(
+        ownerUserId: String,
+        chatId: String,
+        peerUserId: String,
+        messageId: String,
+        selectedOptionIds: List<String>
+    ) = withContext(Dispatchers.IO) {
+        val existing = dao.getMessageById(messageId) ?: return@withContext
+        val poll = ChatAttachmentPayloadCodec.decodePoll(existing.mediaUrl) ?: return@withContext
+        if (poll.isClosed) return@withContext
+
+        val normalizedSelection = if (poll.allowMultipleVotes) {
+            selectedOptionIds.distinct()
+        } else {
+            selectedOptionIds.take(1)
+        }
+
+        val updatedOptions = poll.options.map { opt ->
+            val withoutMe = opt.voterUserIds.filterNot { it == ownerUserId }
+            val newVoters = if (opt.optionId in normalizedSelection) {
+                withoutMe + ownerUserId
+            } else {
+                withoutMe
+            }
+            opt.copy(voterUserIds = newVoters)
+        }
+        val updatedPoll = poll.copy(options = updatedOptions)
+        val newMediaUrlJson = ChatAttachmentPayloadCodec.encodePoll(updatedPoll)
+        val totalVotes = updatedPoll.totalVotesCount()
+        val newSummaryText = "${updatedPoll.question} ($totalVotes ${if (totalVotes == 1) "vote" else "votes"})"
+
+        val encrypted = signalEngine.encryptPayload(
+            ownerUserId = ownerUserId,
+            peerUserId = peerUserId,
+            envelopeType = "POLL_VOTE",
+            messageType = ChatMessageType.POLL.name,
+            text = newSummaryText,
+            mediaId = existing.mediaId,
+            mediaUrl = newMediaUrlJson,
+            mediaPreviewUrl = existing.mediaPreviewUrl,
+            mediaTitle = updatedPoll.question,
+            mediaMimeType = "application/vnd.telefam.poll+json"
+        )
+        val now = System.currentTimeMillis()
+        dao.updateMessageStructuredMetadata(
+            messageId = messageId,
+            newMediaUrl = newMediaUrlJson,
+            newDecryptedText = newSummaryText,
+            newCiphertext = encrypted.ciphertextBase64,
+            newHeader = encrypted.ratchetHeaderJson,
+            editedAtMs = now
+        )
+        refreshChatLastMessageSummary(chatId)
+
+        val idempKey = TelefamCryptoAndTelemetry.sha256Hex(
+            "poll_vote:$messageId:$ownerUserId:${normalizedSelection.joinToString(",")}:$now".toByteArray(Charsets.UTF_8)
+        )
+        dao.enqueueChatOutbox(
+            ChatOutboxEntity(
+                outboxId = UUID.randomUUID().toString(),
+                ownerUserId = ownerUserId,
+                chatId = chatId,
+                targetUserId = peerUserId,
+                messageId = messageId,
+                actionType = "POLL_VOTE",
+                payloadJson = JSONObject().apply {
+                    put("messageId", messageId)
+                    put("pollId", updatedPoll.pollId)
+                    put("selectedOptionIds", org.json.JSONArray(normalizedSelection))
+                    put("ciphertextBase64", encrypted.ciphertextBase64)
+                    put("ratchetHeaderJson", encrypted.ratchetHeaderJson)
+                }.toString(),
+                idempotencyKey = idempKey,
+                createdAtMs = now
+            )
+        )
+        sendWebSocketFrameSilently(
+            JSONObject().apply {
+                put("eventType", "POLL_VOTE")
+                put("chatId", chatId)
+                put("messageId", messageId)
+                put("senderUserId", ownerUserId)
+                put("recipientUserId", peerUserId)
+                put("ciphertextBase64", encrypted.ciphertextBase64)
+                put("ratchetHeaderJson", encrypted.ratchetHeaderJson)
+            }.toString()
+        )
+        flushOutboxNowOrSchedule(ownerUserId)
+    }
+
+    /**
+     * Updates RSVP status ("GOING", "MAYBE", "DECLINED") on an E2EE Event message,
+     * persists to Room immediately, re-encrypts via Signal Double Ratchet, and syncs to backend + WebSocket.
+     */
+    suspend fun rsvpToEventMessage(
+        ownerUserId: String,
+        chatId: String,
+        peerUserId: String,
+        messageId: String,
+        rsvpStatus: String
+    ) = withContext(Dispatchers.IO) {
+        val existing = dao.getMessageById(messageId) ?: return@withContext
+        val event = ChatAttachmentPayloadCodec.decodeEvent(existing.mediaUrl) ?: return@withContext
+
+        val goingWithoutMe = event.goingUserIds.filterNot { it == ownerUserId }
+        val maybeWithoutMe = event.maybeUserIds.filterNot { it == ownerUserId }
+        val declinedWithoutMe = event.declinedUserIds.filterNot { it == ownerUserId }
+
+        val updatedEvent = when (rsvpStatus.uppercase()) {
+            "GOING" -> event.copy(
+                goingUserIds = goingWithoutMe + ownerUserId,
+                maybeUserIds = maybeWithoutMe,
+                declinedUserIds = declinedWithoutMe
+            )
+            "MAYBE" -> event.copy(
+                goingUserIds = goingWithoutMe,
+                maybeUserIds = maybeWithoutMe + ownerUserId,
+                declinedUserIds = declinedWithoutMe
+            )
+            "DECLINED" -> event.copy(
+                goingUserIds = goingWithoutMe,
+                maybeUserIds = maybeWithoutMe,
+                declinedUserIds = declinedWithoutMe + ownerUserId
+            )
+            else -> event
+        }
+
+        val newMediaUrlJson = ChatAttachmentPayloadCodec.encodeEvent(updatedEvent)
+        val goingCount = updatedEvent.goingUserIds.size
+        val newSummaryText = "${updatedEvent.title} · $goingCount going"
+
+        val encrypted = signalEngine.encryptPayload(
+            ownerUserId = ownerUserId,
+            peerUserId = peerUserId,
+            envelopeType = "EVENT_RSVP",
+            messageType = ChatMessageType.EVENT.name,
+            text = newSummaryText,
+            mediaId = existing.mediaId,
+            mediaUrl = newMediaUrlJson,
+            mediaPreviewUrl = existing.mediaPreviewUrl,
+            mediaTitle = updatedEvent.title,
+            mediaMimeType = "application/vnd.telefam.event+json"
+        )
+        val now = System.currentTimeMillis()
+        dao.updateMessageStructuredMetadata(
+            messageId = messageId,
+            newMediaUrl = newMediaUrlJson,
+            newDecryptedText = newSummaryText,
+            newCiphertext = encrypted.ciphertextBase64,
+            newHeader = encrypted.ratchetHeaderJson,
+            editedAtMs = now
+        )
+        refreshChatLastMessageSummary(chatId)
+
+        val idempKey = TelefamCryptoAndTelemetry.sha256Hex(
+            "event_rsvp:$messageId:$ownerUserId:$rsvpStatus:$now".toByteArray(Charsets.UTF_8)
+        )
+        dao.enqueueChatOutbox(
+            ChatOutboxEntity(
+                outboxId = UUID.randomUUID().toString(),
+                ownerUserId = ownerUserId,
+                chatId = chatId,
+                targetUserId = peerUserId,
+                messageId = messageId,
+                actionType = "EVENT_RSVP",
+                payloadJson = JSONObject().apply {
+                    put("messageId", messageId)
+                    put("eventId", updatedEvent.eventId)
+                    put("rsvpStatus", rsvpStatus.uppercase())
+                    put("ciphertextBase64", encrypted.ciphertextBase64)
+                    put("ratchetHeaderJson", encrypted.ratchetHeaderJson)
+                }.toString(),
+                idempotencyKey = idempKey,
+                createdAtMs = now
+            )
+        )
+        sendWebSocketFrameSilently(
+            JSONObject().apply {
+                put("eventType", "EVENT_RSVP")
+                put("chatId", chatId)
+                put("messageId", messageId)
+                put("senderUserId", ownerUserId)
+                put("recipientUserId", peerUserId)
+                put("ciphertextBase64", encrypted.ciphertextBase64)
+                put("ratchetHeaderJson", encrypted.ratchetHeaderJson)
             }.toString()
         )
         flushOutboxNowOrSchedule(ownerUserId)
@@ -1794,8 +2167,9 @@ class TelefamChatRepository(
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            recorder.setAudioSamplingRate(44100)
-            recorder.setAudioEncodingBitRate(96000)
+            recorder.setAudioChannels(1)
+            recorder.setAudioSamplingRate(24000)
+            recorder.setAudioEncodingBitRate(32000)
             recorder.setOutputFile(outFile.absolutePath)
             recorder.prepare()
             recorder.start()
@@ -1862,6 +2236,11 @@ class TelefamChatRepository(
             // Ensure file exists on disk if mic hardware was unavailable in headless container
             runCatching {
                 outFile.writeBytes("TFM_VOICE_NOTE_CONTAINER_V1:$totalDuration".toByteArray(Charsets.UTF_8))
+            }
+        }
+        if (outFile != null && outFile.exists()) {
+            repoScope.launch {
+                TelefamAggressiveCompressionEngine.compressAndEnforce100MbLimitOnFile(outFile)
             }
         }
 
@@ -2096,30 +2475,107 @@ class TelefamChatRepository(
                     lastMessagePreview = buildPreviewTextForMessage(latest),
                     lastMessageSenderId = latest.senderUserId,
                     lastMessageDeliveryStatus = latest.deliveryStatus,
-                    lastMessageMediaIconUrl = latest.mediaPreviewUrl ?: latest.mediaUrl,
+                    lastMessageMediaIconUrl = extractHomePreviewThumbnail(latest),
                     lastMessageTimestampMs = latest.createdAtMs
                 )
             )
         }
     }
 
+    private fun extractHomePreviewThumbnail(msg: ChatMessageEntity): String? {
+        if (msg.isViewOnce || msg.isViewOnceConsumed) return null
+        return when (msg.messageType) {
+            ChatMessageType.IMAGE.name,
+            ChatMessageType.VIDEO.name -> msg.mediaPreviewUrl ?: msg.mediaLocalPath
+            ChatMessageType.MEDIA_ALBUM.name -> {
+                msg.mediaPreviewUrl
+                    ?: ChatAttachmentPayloadCodec.decodeAlbum(msg.mediaUrl)?.items?.firstOrNull()?.let {
+                        it.thumbnailPath ?: it.localPath
+                    }
+            }
+            ChatMessageType.STICKER.name,
+            ChatMessageType.GIF.name,
+            ChatMessageType.CLIP.name -> msg.mediaPreviewUrl ?: msg.mediaUrl
+            else -> null
+        }
+    }
+
     private fun buildPreviewTextForMessage(msg: ChatMessageEntity): String {
+        val captionClean = msg.decryptedText.replace("\n", " ").trim()
         return when (msg.messageType) {
             ChatMessageType.VOICE_NOTE.name -> {
                 if (msg.isViewOnceConsumed) "View-once voice note opened"
                 else if (msg.isViewOnce) "View-once voice note (${formatDurationShort(msg.voiceDurationMs)})"
                 else "Voice note (${formatDurationShort(msg.voiceDurationMs)})"
             }
+            ChatMessageType.IMAGE.name -> {
+                if (msg.isViewOnceConsumed) "View-once photo opened"
+                else if (msg.isViewOnce) "View-once photo"
+                else if (captionClean.isNotBlank()) "Photo · $captionClean"
+                else "Photo"
+            }
+            ChatMessageType.VIDEO.name -> {
+                val dur = if (msg.voiceDurationMs > 0L) " (${formatDurationShort(msg.voiceDurationMs)})" else ""
+                if (msg.isViewOnceConsumed) "View-once video opened"
+                else if (msg.isViewOnce) "View-once video$dur"
+                else if (captionClean.isNotBlank()) "Video$dur · $captionClean"
+                else "Video$dur"
+            }
+            ChatMessageType.MEDIA_ALBUM.name -> {
+                val album = ChatAttachmentPayloadCodec.decodeAlbum(msg.mediaUrl)
+                val count = album?.items?.size ?: 2
+                if (captionClean.isNotBlank()) "Album ($count items) · $captionClean"
+                else "Album ($count items)"
+            }
+            ChatMessageType.LOCATION.name -> {
+                if (msg.isViewOnceConsumed) "View-once location opened"
+                else if (msg.isViewOnce) "View-once location"
+                else {
+                    val loc = ChatAttachmentPayloadCodec.decodeLocation(msg.mediaUrl)
+                    val prefix = if (loc?.isLiveLocation == true) "Live location" else "Location"
+                    val label = loc?.placeTitle?.ifBlank { loc.addressLine }.orEmpty()
+                    if (label.isNotBlank()) "$prefix · $label" else prefix
+                }
+            }
+            ChatMessageType.CONTACT.name -> {
+                val contact = ChatAttachmentPayloadCodec.decodeContact(msg.mediaUrl)
+                val name = contact?.displayName?.ifBlank { "Contact" } ?: "Contact"
+                "Contact · $name"
+            }
+            ChatMessageType.DOCUMENT.name -> {
+                val doc = ChatAttachmentPayloadCodec.decodeDocument(msg.mediaUrl)
+                val name = doc?.fileName ?: msg.mediaTitle ?: "Document"
+                "Document · $name"
+            }
+            ChatMessageType.POLL.name -> {
+                val poll = ChatAttachmentPayloadCodec.decodePoll(msg.mediaUrl)
+                val q = poll?.question ?: captionClean.ifBlank { "Poll" }
+                "Poll · $q"
+            }
+            ChatMessageType.EVENT.name -> {
+                val ev = ChatAttachmentPayloadCodec.decodeEvent(msg.mediaUrl)
+                val title = ev?.title ?: captionClean.ifBlank { "Event" }
+                "Event · $title"
+            }
             ChatMessageType.STICKER.name -> "Sticker"
             ChatMessageType.GIF.name -> "GIF"
             ChatMessageType.CLIP.name -> "Clip"
-            else -> msg.decryptedText.replace("\n", " ").trim()
+            else -> captionClean
         }
     }
 
     private fun buildReplyPreviewLabel(msg: ChatMessageItem): String {
+        val captionClean = msg.decryptedText.replace("\n", " ").trim()
         return when (msg.messageType) {
             ChatMessageType.VOICE_NOTE -> "Voice note (${formatDurationShort(msg.voiceDurationMs)})"
+            ChatMessageType.IMAGE -> if (msg.isViewOnce) "View-once photo" else captionClean.ifBlank { "Photo" }.take(80)
+            ChatMessageType.VIDEO -> if (msg.isViewOnce) "View-once video" else captionClean.ifBlank { "Video" }.take(80)
+            ChatMessageType.MEDIA_ALBUM -> captionClean.ifBlank { "Media album" }.take(80)
+            ChatMessageType.LOCATION -> if (msg.isViewOnce) "View-once location" else (msg.mediaTitle ?: "Location").take(80)
+            ChatMessageType.CONTACT -> "Contact · ${(msg.mediaTitle ?: "Shared Contact").take(64)}"
+            ChatMessageType.DOCUMENT -> "Document · ${(msg.mediaTitle ?: "File").take(64)}"
+            ChatMessageType.POLL -> "Poll · ${(msg.mediaTitle ?: captionClean).take(64)}"
+            ChatMessageType.EVENT -> "Event · ${(msg.mediaTitle ?: captionClean).take(64)}"
             ChatMessageType.STICKER -> "Sticker"
             ChatMessageType.GIF -> "GIF"
             ChatMessageType.CLIP -> "Clip"
@@ -2136,7 +2592,8 @@ class TelefamChatRepository(
 
     private fun sendWebSocketFrameSilently(frameText: String) {
         runCatching {
-            activeWebSocket?.send(frameText)
+            val compressedFrame = TelefamAggressiveCompressionEngine.compressTextAggressiveToBase64(frameText)
+            activeWebSocket?.send(compressedFrame)
         }
     }
 

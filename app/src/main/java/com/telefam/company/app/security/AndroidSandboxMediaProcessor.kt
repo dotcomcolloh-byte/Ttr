@@ -31,15 +31,15 @@ import kotlin.math.min
  */
 object AndroidSandboxMediaProcessor {
 
-    private const val MAX_RAW_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
+    private const val MAX_RAW_SIZE_BYTES = 100 * 1024 * 1024 // 100 MB backend max file size
     private const val TARGET_AVATAR_PX = 512
 
     suspend fun decodeSampleBitmapForCrop(context: Context, uri: Uri): Bitmap? = withContext(Dispatchers.IO) {
         runCatching {
             val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext null
-            require(rawBytes.isNotEmpty() && rawBytes.size <= MAX_RAW_SIZE_BYTES * 2) {
-                "Selected image exceeds maximum allowed size"
+            require(rawBytes.isNotEmpty() && rawBytes.size <= MAX_RAW_SIZE_BYTES) {
+                "Selected image exceeds maximum allowed size of 100 MB"
             }
             require(detectMagicMime(rawBytes) != null) {
                 "Unsupported or untrusted image magic header"

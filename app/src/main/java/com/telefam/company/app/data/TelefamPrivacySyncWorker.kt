@@ -417,7 +417,14 @@ class TelefamPrivacySyncWorker(
                         )
                     }
                     "SEND", "FORWARD" -> {
-                        if (isTargetDeleted) {
+                        val attachmentBytes = json.optLong("attachmentSizeBytes", 0L)
+                        if (attachmentBytes > TelefamNetworkClient.MAX_BACKEND_FILE_SIZE_BYTES) {
+                            TelefamChatActionResponse(
+                                synced = false,
+                                status = "PAYLOAD_TOO_LARGE",
+                                errorCode = "FILE_TOO_LARGE_100MB_LIMIT"
+                            )
+                        } else if (isTargetDeleted) {
                             TelefamChatActionResponse(synced = false, status = "USER_NOT_FOUND", errorCode = "USER_NOT_FOUND")
                         } else if (isTargetBlocked) {
                             TelefamChatActionResponse(synced = false, status = "BLOCKED", errorCode = "BLOCKED")
@@ -437,6 +444,8 @@ class TelefamPrivacySyncWorker(
                                     isForwarded = json.optBoolean("isForwarded", item.actionType == "FORWARD"),
                                     isViewOnce = json.optBoolean("isViewOnce", false),
                                     expiresAtMs = json.optLong("expiresAtMs", 0L).takeIf { it > 0L },
+                                    attachmentSizeBytes = attachmentBytes,
+                                    contentCompression = "deflate-lvl9",
                                     idempotencyKey = item.idempotencyKey,
                                     clientTimestampMs = item.createdAtMs
                                 )
@@ -571,6 +580,46 @@ class TelefamPrivacySyncWorker(
                                 peerUserId = item.targetUserId,
                                 idempotencyKey = item.idempotencyKey,
                                 clearedAtMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "POLL_VOTE" -> {
+                        val selArr = json.optJSONArray("selectedOptionIds") ?: JSONArray()
+                        val selectedIds = buildList {
+                            for (i in 0 until selArr.length()) add(selArr.optString(i))
+                        }
+                        TelefamNetworkClient.api.syncPollVote(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamPollVotePayload(
+                                chatId = item.chatId,
+                                messageId = item.messageId ?: item.outboxId,
+                                pollId = json.optString("pollId", ""),
+                                voterUserId = item.ownerUserId,
+                                recipientUserId = item.targetUserId,
+                                selectedOptionIds = selectedIds,
+                                ciphertextBase64 = json.optString("ciphertextBase64", ""),
+                                e2eeHeaderJson = json.optString("ratchetHeaderJson", "{}"),
+                                idempotencyKey = item.idempotencyKey,
+                                votedAtMs = item.createdAtMs
+                            )
+                        )
+                    }
+                    "EVENT_RSVP" -> {
+                        TelefamNetworkClient.api.syncEventRsvp(
+                            rlsUserId = item.ownerUserId,
+                            idempotencyKey = item.idempotencyKey,
+                            payload = TelefamEventRsvpPayload(
+                                chatId = item.chatId,
+                                messageId = item.messageId ?: item.outboxId,
+                                eventId = json.optString("eventId", ""),
+                                responderUserId = item.ownerUserId,
+                                recipientUserId = item.targetUserId,
+                                rsvpStatus = json.optString("rsvpStatus", "GOING"),
+                                ciphertextBase64 = json.optString("ciphertextBase64", ""),
+                                e2eeHeaderJson = json.optString("ratchetHeaderJson", "{}"),
+                                idempotencyKey = item.idempotencyKey,
+                                updatedAtMs = item.createdAtMs
                             )
                         )
                     }

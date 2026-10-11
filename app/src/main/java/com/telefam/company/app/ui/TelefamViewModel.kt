@@ -3823,4 +3823,331 @@ class TelefamViewModel(application: Application) : AndroidViewModel(application)
             it.copy(destination = AppDestination.ONE_TO_ONE_CHAT)
         }
     }
+
+    // --- Rich File & Attachment Sending (Gallery, Camera, Location, Contact, Document, Poll, Event) ---
+
+    fun sendMediaAttachmentItems(
+        items: List<com.telefam.company.app.domain.ChatMediaAttachmentItem>,
+        caption: String,
+        isViewOnce: Boolean
+    ) {
+        if (items.isEmpty()) return
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val cleanCaption = caption.trim()
+        val effectiveViewOnce = isViewOnce && items.size == 1
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            if (items.size == 1) {
+                val single = items.first()
+                val msgType = if (single.isVideo) ChatMessageType.VIDEO else ChatMessageType.IMAGE
+                val singleAlbumPayload = com.telefam.company.app.domain.ChatMediaAlbumPayload(
+                    items = listOf(single),
+                    caption = cleanCaption
+                )
+                val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeAlbum(singleAlbumPayload)
+                chatRepository.sendMessage(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = activeChat.peerUserId,
+                    messageType = msgType,
+                    text = cleanCaption,
+                    voiceDurationMs = single.durationMs,
+                    isViewOnce = effectiveViewOnce,
+                    replyToMessage = replyTarget,
+                    peerDisplayNameForReply = activeChat.peerFullName,
+                    attachmentMediaId = single.itemId,
+                    attachmentMediaUrl = encodedJson,
+                    attachmentPreviewUrl = single.thumbnailPath ?: single.localPath,
+                    attachmentLocalPath = single.localPath,
+                    attachmentTitle = single.fileName,
+                    attachmentMimeType = single.mimeType
+                )
+            } else {
+                val albumPayload = com.telefam.company.app.domain.ChatMediaAlbumPayload(
+                    items = items,
+                    caption = cleanCaption
+                )
+                val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeAlbum(albumPayload)
+                val firstItem = items.first()
+                chatRepository.sendMessage(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = activeChat.peerUserId,
+                    messageType = ChatMessageType.MEDIA_ALBUM,
+                    text = cleanCaption,
+                    voiceDurationMs = firstItem.durationMs,
+                    isViewOnce = false,
+                    replyToMessage = replyTarget,
+                    peerDisplayNameForReply = activeChat.peerFullName,
+                    attachmentMediaId = "album_${java.util.UUID.randomUUID()}",
+                    attachmentMediaUrl = encodedJson,
+                    attachmentPreviewUrl = firstItem.thumbnailPath ?: firstItem.localPath,
+                    attachmentLocalPath = firstItem.localPath,
+                    attachmentTitle = "Album (${items.size} items)",
+                    attachmentMimeType = "multipart/mixed"
+                )
+            }
+        }
+    }
+
+    fun sendLocationAttachment(
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Float,
+        placeTitle: String,
+        addressLine: String,
+        isLiveLocation: Boolean,
+        liveDurationMinutes: Int,
+        isViewOnce: Boolean,
+        caption: String
+    ) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val cleanCaption = caption.trim()
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            val (liveToken, expiresAtMs) = if (isLiveLocation || isViewOnce) {
+                chatRepository.issueServerLiveLocationToken(
+                    ownerUserId = ownerId,
+                    chatId = chatId,
+                    peerUserId = activeChat.peerUserId,
+                    latitude = latitude,
+                    longitude = longitude,
+                    accuracyMeters = accuracyMeters,
+                    durationMinutes = if (isLiveLocation) liveDurationMinutes else 30,
+                    isViewOnce = isViewOnce
+                )
+            } else {
+                "" to null
+            }
+
+            val locationPayload = com.telefam.company.app.domain.ChatLocationPayload(
+                latitude = latitude,
+                longitude = longitude,
+                accuracyMeters = accuracyMeters,
+                placeTitle = placeTitle.trim().ifBlank { "Shared Location" },
+                addressLine = addressLine.trim(),
+                isLiveLocation = isLiveLocation,
+                liveSessionToken = liveToken,
+                expiresAtMs = expiresAtMs,
+                isViewOnce = isViewOnce,
+                caption = cleanCaption
+            )
+            val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeLocation(locationPayload)
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.LOCATION,
+                text = cleanCaption.ifBlank { locationPayload.placeTitle },
+                isViewOnce = isViewOnce,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName,
+                attachmentMediaId = "loc_${java.util.UUID.randomUUID()}",
+                attachmentMediaUrl = encodedJson,
+                attachmentTitle = locationPayload.placeTitle,
+                attachmentMimeType = "application/vnd.telefam.location+json"
+            )
+        }
+    }
+
+    fun sendContactAttachment(
+        contact: com.telefam.company.app.domain.ChatContactPayload,
+        caption: String = ""
+    ) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val cleanCaption = caption.trim()
+        val finalContact = if (cleanCaption.isNotBlank()) contact.copy(caption = cleanCaption) else contact
+        val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeContact(finalContact)
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.CONTACT,
+                text = cleanCaption.ifBlank { finalContact.displayName },
+                isViewOnce = false,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName,
+                attachmentMediaId = "contact_${java.util.UUID.randomUUID()}",
+                attachmentMediaUrl = encodedJson,
+                attachmentTitle = finalContact.displayName,
+                attachmentMimeType = "text/vcard"
+            )
+        }
+    }
+
+    fun sendDocumentAttachment(
+        document: com.telefam.company.app.domain.ChatDocumentPayload
+    ) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeDocument(document)
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.DOCUMENT,
+                text = document.caption.ifBlank { document.fileName },
+                voiceDurationMs = document.audioDurationMs,
+                isViewOnce = false,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName,
+                attachmentMediaId = "doc_${java.util.UUID.randomUUID()}",
+                attachmentMediaUrl = encodedJson,
+                attachmentLocalPath = document.localPath,
+                attachmentTitle = document.fileName,
+                attachmentMimeType = document.mimeType
+            )
+        }
+    }
+
+    fun sendPollAttachment(
+        poll: com.telefam.company.app.domain.ChatPollPayload
+    ) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val finalPoll = poll.copy(createdByUserId = ownerId)
+        val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodePoll(finalPoll)
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.POLL,
+                text = finalPoll.question,
+                isViewOnce = false,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName,
+                attachmentMediaId = finalPoll.pollId,
+                attachmentMediaUrl = encodedJson,
+                attachmentTitle = finalPoll.question,
+                attachmentMimeType = "application/vnd.telefam.poll+json"
+            )
+        }
+    }
+
+    fun sendEventAttachment(
+        event: com.telefam.company.app.domain.ChatEventPayload
+    ) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val activeChat = state.activeChatItem ?: return
+        if (!activeChat.canSendMessages) return
+
+        val ownerId = currentAuthenticatedUserId()
+        val replyTarget = state.replyingToMessage
+        val finalEvent = event.copy(
+            createdByUserId = ownerId,
+            goingUserIds = (event.goingUserIds + ownerId).distinct()
+        )
+        val encodedJson = com.telefam.company.app.domain.ChatAttachmentPayloadCodec.encodeEvent(finalEvent)
+
+        _uiState.update { it.copy(replyingToMessage = null) }
+
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.sendMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = activeChat.peerUserId,
+                messageType = ChatMessageType.EVENT,
+                text = finalEvent.title,
+                isViewOnce = false,
+                replyToMessage = replyTarget,
+                peerDisplayNameForReply = activeChat.peerFullName,
+                attachmentMediaId = finalEvent.eventId,
+                attachmentMediaUrl = encodedJson,
+                attachmentTitle = finalEvent.title,
+                attachmentMimeType = "application/vnd.telefam.event+json"
+            )
+        }
+    }
+
+    fun voteOnPollMessage(messageId: String, selectedOptionIds: List<String>) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.voteOnPollMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = messageId,
+                selectedOptionIds = selectedOptionIds
+            )
+        }
+    }
+
+    fun rsvpToEventMessage(messageId: String, rsvpStatus: String) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.rsvpToEventMessage(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = messageId,
+                rsvpStatus = rsvpStatus
+            )
+        }
+    }
+
+    fun consumeViewOnceMessage(messageId: String) {
+        val state = _uiState.value
+        val chatId = state.activeChatId ?: return
+        val peerId = state.activeChatItem?.peerUserId ?: return
+        val ownerId = currentAuthenticatedUserId()
+        viewModelScope.launch(safeExceptionHandler) {
+            chatRepository.consumeViewOnceVoiceNote(
+                ownerUserId = ownerId,
+                chatId = chatId,
+                peerUserId = peerId,
+                messageId = messageId
+            )
+        }
+    }
 }

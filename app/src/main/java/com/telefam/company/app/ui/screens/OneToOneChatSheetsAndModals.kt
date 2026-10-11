@@ -757,7 +757,7 @@ fun MessageLongPressActionSheet(
                 onClick = onReply
             )
 
-            if (allowCopy && message.messageType == ChatMessageType.TEXT && message.decryptedText.isNotBlank()) {
+            if (allowCopy && !message.isViewOnce && message.decryptedText.isNotBlank()) {
                 MessageSheetActionRow(
                     icon = LucideIconKind.COPY,
                     label = "Copy",
@@ -1059,6 +1059,7 @@ fun ChatOverflowModalSheet(
     ) -> Unit = { _, _, _, _, _ -> },
     onToggleE2eeVerified: (Boolean) -> Unit,
     onUnfavouriteMessage: (String) -> Unit,
+    onOpenLinkInBrowser: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1193,6 +1194,11 @@ fun ChatOverflowModalSheet(
                         ) {
                             items(filtered, key = { it.attachmentId }) { item ->
                                 Surface(
+                                    onClick = {
+                                        if (item.category == ChatAttachmentCategory.LINKS && item.subtitle.isNotBlank()) {
+                                            onOpenLinkInBrowser(item.subtitle)
+                                        }
+                                    },
                                     shape = RoundedCornerShape(12.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                                     modifier = Modifier.fillMaxWidth()

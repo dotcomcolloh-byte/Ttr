@@ -101,8 +101,13 @@ import com.telefam.company.app.domain.ChatAttachmentCategory
 import com.telefam.company.app.domain.ChatAttachmentItem
 import com.telefam.company.app.domain.ChatBackgroundThemeOption
 import com.telefam.company.app.domain.ChatDisappearingOption
+import com.telefam.company.app.domain.ChatContactPayload
+import com.telefam.company.app.domain.ChatDocumentPayload
+import com.telefam.company.app.domain.ChatEventPayload
+import com.telefam.company.app.domain.ChatMediaAttachmentItem
 import com.telefam.company.app.domain.ChatMessageItem
 import com.telefam.company.app.domain.ChatMessageType
+import com.telefam.company.app.domain.ChatPollPayload
 import com.telefam.company.app.domain.ChatReactionChoice
 import com.telefam.company.app.domain.E2eeVerificationSnapshot
 import com.telefam.company.app.domain.KlipyMediaItem
@@ -113,8 +118,28 @@ import com.telefam.company.app.domain.ReportLocationOption
 import com.telefam.company.app.domain.ReportReasonOption
 import com.telefam.company.app.domain.ReportUrgencyOption
 import com.telefam.company.app.domain.TelefamBubbleColors
+import androidx.activity.result.PickVisualMediaRequest
+import com.telefam.company.app.ui.components.ChatAttachmentMenuOption
 import com.telefam.company.app.ui.components.LucideIconKind
+import com.telefam.company.app.ui.components.PhoneNumberActionBottomSheet
+import com.telefam.company.app.ui.components.SecureInAppBrowserDialog
+import com.telefam.company.app.ui.components.SmartAutodetectMessageContent
+import com.telefam.company.app.ui.components.TelefamAttachmentDeviceHelper
+import com.telefam.company.app.ui.components.TelefamAttachmentMenuSheet
+import com.telefam.company.app.ui.components.TelefamCameraModeChooserDialog
+import com.telefam.company.app.ui.components.TelefamContactAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamDocumentAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamEventAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamEventComposerDialog
+import com.telefam.company.app.ui.components.TelefamLocationAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamLocationComposerDialog
 import com.telefam.company.app.ui.components.TelefamLucideIcon
+import com.telefam.company.app.ui.components.TelefamMediaAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamMediaComposerDialog
+import com.telefam.company.app.ui.components.TelefamPollAttachmentBubble
+import com.telefam.company.app.ui.components.TelefamPollComposerDialog
+import com.telefam.company.app.ui.components.copyTextToClipboard
+import com.telefam.company.app.ui.components.launchEmailClientSafely
 import com.telefam.company.app.ui.components.toLucideIconKind
 import kotlinx.coroutines.launch
 import java.io.File
@@ -192,7 +217,26 @@ fun OneToOneChatScreen(
         additionalDetails: String
     ) -> Unit,
     onOpenE2eeVerificationScreen: () -> Unit,
-    onSetE2eeVerified: (Boolean) -> Unit
+    onSetE2eeVerified: (Boolean) -> Unit,
+    onSendMediaAttachments: (items: List<ChatMediaAttachmentItem>, caption: String, isViewOnce: Boolean) -> Unit = { _, _, _ -> },
+    onSendLocationAttachment: (
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Float,
+        placeTitle: String,
+        addressLine: String,
+        isLiveLocation: Boolean,
+        liveDurationMinutes: Int,
+        isViewOnce: Boolean,
+        caption: String
+    ) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
+    onSendContactAttachment: (contact: ChatContactPayload, caption: String) -> Unit = { _, _ -> },
+    onSendDocumentAttachment: (document: ChatDocumentPayload) -> Unit = {},
+    onSendPollAttachment: (poll: ChatPollPayload) -> Unit = {},
+    onSendEventAttachment: (event: ChatEventPayload) -> Unit = {},
+    onVotePollMessage: (messageId: String, selectedOptionIds: List<String>) -> Unit = { _, _ -> },
+    onRsvpEventMessage: (messageId: String, rsvpStatus: String) -> Unit = { _, _ -> },
+    onConsumeViewOnceMessage: (messageId: String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val isDark = isTelefamDarkTheme()
@@ -244,6 +288,146 @@ fun OneToOneChatScreen(
     var isOverflowMenuExpanded by remember { mutableStateOf(false) }
     var activeOverflowModal by remember { mutableStateOf<ChatOverflowSubModal?>(null) }
     var selectedAttachmentCategory by remember { mutableStateOf(ChatAttachmentCategory.MEDIA) }
+    var activeInAppBrowserUrl by remember { mutableStateOf<String?>(null) }
+    var activePhoneSheetTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    // Rich File Attachment Menu & Composer States
+    val attachmentScope = rememberCoroutineScope()
+    var isAttachmentMenuOpen by remember { mutableStateOf(false) }
+    var isCameraChooserOpen by remember { mutableStateOf(false) }
+    var pendingMediaComposerItems by remember { mutableStateOf<List<ChatMediaAttachmentItem>>(emptyList()) }
+    var pendingCameraCaptureFile by remember { mutableStateOf<Pair<File, Boolean>?>(null) }
+    var isLocationComposerOpen by remember { mutableStateOf(false) }
+    var isPollComposerOpen by remember { mutableStateOf(false) }
+    var isEventComposerOpen by remember { mutableStateOf(false) }
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val allowDownloads = remember(allowForward, screenshotsDisallowed) {
+        allowForward && !screenshotsDisallowed
+    }
+
+    // 1. Gallery Picker (Multi-select Photos & Videos)
+    val galleryMediaPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(10)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            attachmentScope.launch {
+                val imported = TelefamAttachmentDeviceHelper.importPickedMediaUris(context, uris)
+                if (imported.isNotEmpty()) {
+                    pendingMediaComposerItems = imported
+                }
+            }
+        }
+    }
+
+    // 2. Camera Capture Launchers (Photo & Video) + Runtime Permission
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        val target = pendingCameraCaptureFile
+        if (success && target != null) {
+            attachmentScope.launch {
+                val item = TelefamAttachmentDeviceHelper.importCapturedCameraFile(context, target.first, isVideo = false)
+                if (item != null) {
+                    pendingMediaComposerItems = listOf(item)
+                }
+            }
+        }
+    }
+
+    val captureVideoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CaptureVideo()
+    ) { _ ->
+        val target = pendingCameraCaptureFile
+        if (target != null && target.first.exists() && target.first.length() > 0L) {
+            attachmentScope.launch {
+                val item = TelefamAttachmentDeviceHelper.importCapturedCameraFile(context, target.first, isVideo = true)
+                if (item != null) {
+                    pendingMediaComposerItems = listOf(item)
+                }
+            }
+        }
+    }
+
+    var pendingCameraActionIsVideo by remember { mutableStateOf(false) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantMap ->
+        val camGranted = grantMap[Manifest.permission.CAMERA] == true
+        if (camGranted) {
+            val (file, uri) = TelefamAttachmentDeviceHelper.createCameraCaptureTarget(context, isVideo = pendingCameraActionIsVideo)
+            pendingCameraCaptureFile = file to pendingCameraActionIsVideo
+            if (pendingCameraActionIsVideo) {
+                captureVideoLauncher.launch(uri)
+            } else {
+                takePictureLauncher.launch(uri)
+            }
+        } else {
+            Toast.makeText(context, "Camera permission is required to capture photos or videos", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 3. Location Runtime Permission Launcher
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantMap ->
+        val granted = grantMap[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grantMap[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        hasLocationPermission = granted
+        isLocationComposerOpen = true
+    }
+
+    // 4. Contact Picker + Runtime Permission Launcher
+    val pickContactLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickContact()
+    ) { contactUri ->
+        if (contactUri != null) {
+            attachmentScope.launch {
+                val picked = TelefamAttachmentDeviceHelper.importPickedContactUri(context, contactUri)
+                if (picked != null) {
+                    onSendContactAttachment(picked, inputText)
+                    if (inputText.isNotBlank()) onInputTextChanged("")
+                }
+            }
+        }
+    }
+
+    val readContactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            pickContactLauncher.launch(null)
+        } else {
+            Toast.makeText(context, "Contacts permission is required to share a contact card", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 5. Document Picker (All document types: Audio, PDF, Docs, Archives, Android Apps .apk)
+    val openDocumentsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val currentCaption = inputText
+            if (currentCaption.isNotBlank()) onInputTextChanged("")
+            attachmentScope.launch {
+                uris.forEachIndexed { idx, uri ->
+                    val doc = TelefamAttachmentDeviceHelper.importPickedDocumentUri(
+                        context = context,
+                        uri = uri,
+                        caption = if (idx == 0) currentCaption else ""
+                    )
+                    if (doc != null) {
+                        onSendDocumentAttachment(doc)
+                    }
+                }
+            }
+        }
+    }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -262,6 +446,14 @@ fun OneToOneChatScreen(
 
     BackHandler {
         when {
+            activeInAppBrowserUrl != null -> activeInAppBrowserUrl = null
+            activePhoneSheetTarget != null -> activePhoneSheetTarget = null
+            pendingMediaComposerItems.isNotEmpty() -> pendingMediaComposerItems = emptyList()
+            isCameraChooserOpen -> isCameraChooserOpen = false
+            isLocationComposerOpen -> isLocationComposerOpen = false
+            isPollComposerOpen -> isPollComposerOpen = false
+            isEventComposerOpen -> isEventComposerOpen = false
+            isAttachmentMenuOpen -> isAttachmentMenuOpen = false
             activeLongPressedMessage != null -> activeLongPressedMessage = null
             isKlipySheetOpen -> isKlipySheetOpen = false
             activeOverflowModal != null -> activeOverflowModal = null
@@ -459,7 +651,26 @@ fun OneToOneChatScreen(
                         }
                     },
                     onToggleVoicePlayback = { onToggleBubbleVoicePlayback(message) },
-                    onToggleReaction = { choice -> onToggleReaction(message.messageId, choice) }
+                    onToggleReaction = { choice -> onToggleReaction(message.messageId, choice) },
+                    onOpenSecureBrowser = { url -> activeInAppBrowserUrl = url },
+                    onOpenEmail = { email -> launchEmailClientSafely(context, email) },
+                    onOpenPhoneActions = { formatted, dialable ->
+                        activePhoneSheetTarget = formatted to dialable
+                    },
+                    onCopyOtp = { otpCode ->
+                        copyTextToClipboard(context, "OTP Code", otpCode)
+                        Toast.makeText(context, "OTP copied: $otpCode", Toast.LENGTH_SHORT).show()
+                    },
+                    allowDownloads = allowDownloads,
+                    onVotePoll = { selectedIds ->
+                        onVotePollMessage(message.messageId, selectedIds)
+                    },
+                    onRsvpEvent = { status ->
+                        onRsvpEventMessage(message.messageId, status)
+                    },
+                    onConsumeViewOnce = {
+                        onConsumeViewOnceMessage(message.messageId)
+                    }
                 )
             }
         }
@@ -536,7 +747,7 @@ fun OneToOneChatScreen(
                     onCancelReplyOrEdit = onCancelReplyOrEdit,
                     onOpenStickerSheet = { isKlipySheetOpen = true },
                     onAttachmentComingSoon = {
-                        Toast.makeText(context, "Coming soon", Toast.LENGTH_SHORT).show()
+                        isAttachmentMenuOpen = true
                     },
                     onSendTextOrEdit = onSendTextOrEdit,
                     onStartVoiceRecording = {
@@ -676,7 +887,186 @@ fun OneToOneChatScreen(
             },
             onToggleE2eeVerified = onSetE2eeVerified,
             onUnfavouriteMessage = onToggleFavourite,
+            onOpenLinkInBrowser = { linkUrl ->
+                activeOverflowModal = null
+                activeInAppBrowserUrl = linkUrl
+            },
             onDismiss = { activeOverflowModal = null }
+        )
+    }
+
+    // Auto-Detected Phone Number Action Bottom Sheet (Call, Copy, Save to Contacts)
+    val currentPhoneTarget = activePhoneSheetTarget
+    if (currentPhoneTarget != null) {
+        PhoneNumberActionBottomSheet(
+            formattedPhone = currentPhoneTarget.first,
+            dialablePhone = currentPhoneTarget.second,
+            suggestedContactName = "",
+            onDismiss = { activePhoneSheetTarget = null }
+        )
+    }
+
+    // Secure In-App Browser Modal for Auto-Detected Links & Locations
+    val currentBrowserUrl = activeInAppBrowserUrl
+    if (currentBrowserUrl != null) {
+        SecureInAppBrowserDialog(
+            initialUrl = currentBrowserUrl,
+            onDismiss = { activeInAppBrowserUrl = null }
+        )
+    }
+
+    // 7-Item File Attachment Sheet (Gallery, Camera, Location, Contact, Document, Poll, Event)
+    if (isAttachmentMenuOpen) {
+        TelefamAttachmentMenuSheet(
+            onDismiss = { isAttachmentMenuOpen = false },
+            onSelectOption = { option ->
+                isAttachmentMenuOpen = false
+                when (option) {
+                    ChatAttachmentMenuOption.GALLERY -> {
+                        galleryMediaPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                        )
+                    }
+                    ChatAttachmentMenuOption.CAMERA -> {
+                        isCameraChooserOpen = true
+                    }
+                    ChatAttachmentMenuOption.LOCATION -> {
+                        val hasLoc = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        hasLocationPermission = hasLoc
+                        if (hasLoc) {
+                            isLocationComposerOpen = true
+                        } else {
+                            locationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        }
+                    }
+                    ChatAttachmentMenuOption.CONTACT -> {
+                        val hasContacts = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.READ_CONTACTS
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasContacts) {
+                            pickContactLauncher.launch(null)
+                        } else {
+                            readContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                        }
+                    }
+                    ChatAttachmentMenuOption.DOCUMENT -> {
+                        openDocumentsLauncher.launch(arrayOf("*/*"))
+                    }
+                    ChatAttachmentMenuOption.POLL -> {
+                        isPollComposerOpen = true
+                    }
+                    ChatAttachmentMenuOption.EVENT -> {
+                        isEventComposerOpen = true
+                    }
+                }
+            }
+        )
+    }
+
+    // Camera Mode Chooser (Take Photo vs Record Video)
+    if (isCameraChooserOpen) {
+        TelefamCameraModeChooserDialog(
+            onDismiss = { isCameraChooserOpen = false },
+            onTakePhoto = {
+                isCameraChooserOpen = false
+                pendingCameraActionIsVideo = false
+                val hasCam = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+                if (hasCam) {
+                    val (file, uri) = TelefamAttachmentDeviceHelper.createCameraCaptureTarget(context, isVideo = false)
+                    pendingCameraCaptureFile = file to false
+                    takePictureLauncher.launch(uri)
+                } else {
+                    cameraPermissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+                }
+            },
+            onRecordVideo = {
+                isCameraChooserOpen = false
+                pendingCameraActionIsVideo = true
+                val hasCam = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+                if (hasCam) {
+                    val (file, uri) = TelefamAttachmentDeviceHelper.createCameraCaptureTarget(context, isVideo = true)
+                    pendingCameraCaptureFile = file to true
+                    captureVideoLauncher.launch(uri)
+                } else {
+                    cameraPermissionLauncher.launch(
+                        arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+                    )
+                }
+            }
+        )
+    }
+
+    // Pre-Send Media Composer (Gallery & Camera with View-Once toggle + Caption input)
+    if (pendingMediaComposerItems.isNotEmpty()) {
+        TelefamMediaComposerDialog(
+            initialItems = pendingMediaComposerItems,
+            initialCaption = inputText,
+            onDismiss = { pendingMediaComposerItems = emptyList() },
+            onSendMedia = { items, caption, isViewOnce ->
+                pendingMediaComposerItems = emptyList()
+                if (inputText.isNotBlank()) onInputTextChanged("")
+                onSendMediaAttachments(items, caption, isViewOnce)
+            }
+        )
+    }
+
+    // Location & Live Location Composer Dialog
+    if (isLocationComposerOpen) {
+        TelefamLocationComposerDialog(
+            hasLocationPermission = hasLocationPermission,
+            onRequestLocationPermission = {
+                locationPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
+            },
+            onDismiss = { isLocationComposerOpen = false },
+            onSendLocation = { lat, lon, acc, title, addr, isLive, liveMins, isViewOnce, cap ->
+                isLocationComposerOpen = false
+                onSendLocationAttachment(lat, lon, acc, title, addr, isLive, liveMins, isViewOnce, cap)
+            }
+        )
+    }
+
+    // Poll Composer Dialog (Text + Image Options + Multiple/Single Vote Settings)
+    if (isPollComposerOpen) {
+        TelefamPollComposerDialog(
+            onDismiss = { isPollComposerOpen = false },
+            onSendPoll = { poll ->
+                isPollComposerOpen = false
+                onSendPollAttachment(poll)
+            }
+        )
+    }
+
+    // Event Composer Dialog
+    if (isEventComposerOpen) {
+        TelefamEventComposerDialog(
+            onDismiss = { isEventComposerOpen = false },
+            onSendEvent = { event ->
+                isEventComposerOpen = false
+                onSendEventAttachment(event)
+            }
         )
     }
 }
@@ -1030,7 +1420,15 @@ private fun OneToOneMessageBubbleRow(
     onLongPress: () -> Unit,
     onSwipeToReply: () -> Unit,
     onToggleVoicePlayback: () -> Unit,
-    onToggleReaction: (ChatReactionChoice) -> Unit
+    onToggleReaction: (ChatReactionChoice) -> Unit,
+    onOpenSecureBrowser: (String) -> Unit = {},
+    onOpenEmail: (String) -> Unit = {},
+    onOpenPhoneActions: (formattedPhone: String, dialablePhone: String) -> Unit = { _, _ -> },
+    onCopyOtp: (String) -> Unit = {},
+    allowDownloads: Boolean = true,
+    onVotePoll: (List<String>) -> Unit = {},
+    onRsvpEvent: (String) -> Unit = {},
+    onConsumeViewOnce: () -> Unit = {}
 ) {
     val isOutgoing = message.isOutgoing(ownerUserId)
     val coroutineScope = rememberCoroutineScope()
@@ -1185,15 +1583,19 @@ private fun OneToOneMessageBubbleRow(
                             }
                             val isLongText = lineCountEstimate > 8 || textContent.length > 320
 
-                            Text(
-                                text = textContent,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 14.5.sp,
-                                    lineHeight = 20.sp
-                                ),
-                                color = bubbleTextColor,
+                            SmartAutodetectMessageContent(
+                                messageId = message.messageId,
+                                textContent = textContent,
+                                isOutgoing = isOutgoing,
+                                bubbleTextColor = bubbleTextColor,
+                                bubbleSubtleColor = bubbleSubtleColor,
                                 maxLines = if (isLongText && !isTextExpanded) 8 else Int.MAX_VALUE,
-                                overflow = TextOverflow.Ellipsis
+                                onBubbleClick = onClick,
+                                onBubbleLongPress = onLongPress,
+                                onOpenSecureBrowser = onOpenSecureBrowser,
+                                onOpenEmail = onOpenEmail,
+                                onOpenPhoneActions = onOpenPhoneActions,
+                                onCopyOtp = onCopyOtp
                             )
 
                             if (isLongText) {
@@ -1229,6 +1631,76 @@ private fun OneToOneMessageBubbleRow(
                                 textColor = bubbleTextColor,
                                 subtleColor = bubbleSubtleColor,
                                 onTogglePlay = onToggleVoicePlayback
+                            )
+                        }
+
+                        ChatMessageType.IMAGE,
+                        ChatMessageType.VIDEO,
+                        ChatMessageType.MEDIA_ALBUM -> {
+                            TelefamMediaAttachmentBubble(
+                                message = message,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor,
+                                allowDownloads = allowDownloads,
+                                onOpenUrlInAppBrowser = onOpenSecureBrowser,
+                                onSelectPhoneNumber = { dialable ->
+                                    val formatted = com.telefam.company.app.ui.components.TelefamSmartEntityDetector.formatAnyPhoneNumber(dialable)
+                                    onOpenPhoneActions(formatted, dialable)
+                                },
+                                onConsumeViewOnce = { onConsumeViewOnce() }
+                            )
+                        }
+
+                        ChatMessageType.LOCATION -> {
+                            TelefamLocationAttachmentBubble(
+                                message = message,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor,
+                                onOpenUrlInAppBrowser = onOpenSecureBrowser,
+                                onConsumeViewOnce = { onConsumeViewOnce() }
+                            )
+                        }
+
+                        ChatMessageType.CONTACT -> {
+                            TelefamContactAttachmentBubble(
+                                message = message,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor
+                            )
+                        }
+
+                        ChatMessageType.DOCUMENT -> {
+                            TelefamDocumentAttachmentBubble(
+                                message = message,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor,
+                                allowDownloads = allowDownloads
+                            )
+                        }
+
+                        ChatMessageType.POLL -> {
+                            TelefamPollAttachmentBubble(
+                                message = message,
+                                currentUserId = ownerUserId,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor,
+                                onVotePoll = onVotePoll
+                            )
+                        }
+
+                        ChatMessageType.EVENT -> {
+                            TelefamEventAttachmentBubble(
+                                message = message,
+                                currentUserId = ownerUserId,
+                                isOutgoing = isOutgoing,
+                                textColor = bubbleTextColor,
+                                subTextColor = bubbleSubtleColor,
+                                onRsvpEvent = onRsvpEvent
                             )
                         }
                     }

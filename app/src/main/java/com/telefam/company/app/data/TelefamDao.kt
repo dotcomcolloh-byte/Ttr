@@ -409,6 +409,16 @@ interface TelefamDao {
     @Query("UPDATE telefam_chat_messages SET decrypted_text = :newText, ciphertext_base64 = :newCiphertext, ratchet_header_json = :newHeader, is_edited = 1, edited_at_ms = :editedAtMs WHERE message_id = :messageId")
     suspend fun updateMessageEdited(messageId: String, newText: String, newCiphertext: String, newHeader: String, editedAtMs: Long)
 
+    @Query("UPDATE telefam_chat_messages SET media_url = :newMediaUrl, decrypted_text = :newDecryptedText, ciphertext_base64 = :newCiphertext, ratchet_header_json = :newHeader, edited_at_ms = :editedAtMs WHERE message_id = :messageId")
+    suspend fun updateMessageStructuredMetadata(
+        messageId: String,
+        newMediaUrl: String?,
+        newDecryptedText: String,
+        newCiphertext: String,
+        newHeader: String,
+        editedAtMs: Long
+    )
+
     @Query("UPDATE telefam_chat_messages SET is_view_once_consumed = 1, media_local_path = NULL, media_url = NULL, ciphertext_base64 = '' WHERE message_id = :messageId")
     suspend fun markViewOnceVoiceNoteConsumed(messageId: String)
 
