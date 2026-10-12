@@ -291,16 +291,7 @@ fun Application.registerTelefamRoutes(
             }
 
             post("/token/refresh") {
-                val deviceHeader = call.request.headers["X-Telefam-Device-Fingerprint"] ?: "unknown"
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "deviceBinding" to deviceHeader.take(16),
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendSyncResponse())
             }
         }
 
@@ -446,11 +437,7 @@ fun Application.registerTelefamRoutes(
 
                 call.respond(
                     HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "serverTimestampMs" to nowMs
-                    )
+                    BackendSyncResponse(serverTimestampMs = nowMs)
                 )
             }
         }
@@ -505,13 +492,7 @@ fun Application.registerTelefamRoutes(
                 privacySettingsCache[req.userId] = req
                 call.respond(
                     HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "rlsEnforced" to true,
-                        "syncVersion" to req.syncVersion,
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
+                    BackendSyncResponse()
                 )
             }
         }
@@ -585,31 +566,13 @@ fun Application.registerTelefamRoutes(
                 val query = call.request.queryParameters["query"]?.trim().orEmpty()
                 val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 1).coerceAtLeast(1)
                 val pageSize = (call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 20).coerceIn(1, 50)
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "rlsUserId" to rlsUserHeader,
-                        "query" to query,
-                        "page" to page,
-                        "pageSize" to pageSize,
-                        "refreshedAtMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendDirectoryResponse())
             }
 
             post("/upload-hashes") {
                 val rlsUserHeader = call.request.header("X-Telefam-RLS-User-Id")?.trim()
                     ?: throw IllegalArgumentException("Missing X-Telefam-RLS-User-Id header")
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "rlsUserId" to rlsUserHeader,
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendSyncResponse())
             }
         }
 
@@ -620,16 +583,7 @@ fun Application.registerTelefamRoutes(
                 val idempotencyKey = call.request.header("X-Telefam-Idempotency-Key")?.trim()
                     ?: throw IllegalArgumentException("Missing X-Telefam-Idempotency-Key header")
                 require(idempotencyKey.length in 8..128) { "Invalid idempotency key" }
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "rlsUserId" to rlsUserHeader,
-                        "idempotencyKey" to idempotencyKey,
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendSyncResponse())
             }
 
             post("/block") {
@@ -637,16 +591,7 @@ fun Application.registerTelefamRoutes(
                     ?: throw IllegalArgumentException("Missing X-Telefam-RLS-User-Id header")
                 val idempotencyKey = call.request.header("X-Telefam-Idempotency-Key")?.trim()
                     ?: throw IllegalArgumentException("Missing X-Telefam-Idempotency-Key header")
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "rlsUserId" to rlsUserHeader,
-                        "idempotencyKey" to idempotencyKey,
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendSyncResponse())
             }
 
             post("/report") {
@@ -654,16 +599,7 @@ fun Application.registerTelefamRoutes(
                     ?: throw IllegalArgumentException("Missing X-Telefam-RLS-User-Id header")
                 val idempotencyKey = call.request.header("X-Telefam-Idempotency-Key")?.trim()
                     ?: throw IllegalArgumentException("Missing X-Telefam-Idempotency-Key header")
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "synced" to true,
-                        "domain" to "api.telefam.company",
-                        "rlsUserId" to rlsUserHeader,
-                        "idempotencyKey" to idempotencyKey,
-                        "serverTimestampMs" to System.currentTimeMillis()
-                    )
-                )
+                call.respond(HttpStatusCode.OK, BackendSyncResponse())
             }
         }
 
